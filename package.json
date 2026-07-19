@@ -52,7 +52,9 @@
   "files": [
     "src",
     "contracts",
-    "deploy",
+    "deploy/script",
+    "deploy/scripts",
+    "deploy/test",
     "deployments",
     "skills",
     "examples",

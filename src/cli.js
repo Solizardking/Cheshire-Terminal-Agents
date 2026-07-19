@@ -13,7 +13,7 @@ const USAGE = `robinhood-agents <command> [options]
 Read-only / unsigned:
   capabilities [--site URL]
   deployments [--chain 4663|46630]
-  prepare-local-robinhood --file registration.json
+  prepare-local-robinhood --file registration.json [--chain 4663|46630]
   prepare-robinhood --file registration.json [--site URL]
   inspect --platform robinhood|solana --id ID [--chain 4663|46630] [--site URL]
 

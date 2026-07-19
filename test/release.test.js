@@ -24,9 +24,17 @@ test("package exposes deployment pins and ships standalone Foundry tooling", () 
   assert.equal(pkg.license, "MIT");
   assert.equal(pkg.publishConfig.access, "public");
   assert.equal(pkg.exports["./deployments"], "./src/deployments.js");
-  for (const entry of ["deploy", "deployments", "foundry.toml", "remappings.txt"]) {
+  for (const entry of [
+    "deploy/script",
+    "deploy/scripts",
+    "deploy/test",
+    "deployments",
+    "foundry.toml",
+    "remappings.txt",
+  ]) {
     assert.ok(pkg.files.includes(entry), `${entry} must be included in npm files`);
   }
+  assert.ok(!pkg.files.includes("deploy"), "npm files must not include ignored deploy/lib dependencies");
   for (const file of [
     "foundry.toml",
     "deploy/script/DeployCheshireAgentRegistries.s.sol",

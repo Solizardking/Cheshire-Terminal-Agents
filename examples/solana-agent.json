@@ -1,0 +1,1 @@
+{"platform":"solana","ownerWallet":"REPLACE_WITH_SOLANA_WALLET","name":"Open Research Agent","symbol":"ORA","description":"Publishes verifiable research.","agentType":"research","personality":"precise","capabilities":["research","MCP"],"imageUri":"ipfs://bafy-example"}

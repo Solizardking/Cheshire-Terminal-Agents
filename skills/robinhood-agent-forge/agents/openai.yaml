@@ -1,4 +1,4 @@
 interface:
   display_name: "Robinhood Agent Forge"
   short_description: "Register and deploy ERC-8004 agents safely"
-  default_prompt: "Use $robinhood-agent-forge to register an agent on Robinhood Chain testnet through Cheshire Terminal."
+  default_prompt: "Use $robinhood-agent-forge to choose Robinhood Chain or Solana and register an agent through Cheshire Terminal."

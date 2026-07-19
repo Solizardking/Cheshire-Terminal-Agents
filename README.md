@@ -7,16 +7,18 @@ An MIT-licensed framework that lets users choose where to create an agent identi
 
 Both paths use the same product flow: select a chain, prepare metadata, review authority and transaction details, authorize with the matching wallet, then verify canonical chain state.
 
+The hosted chain selector and wallet review flow lives at `https://cheshireterminal.ai/agents/forge`.
+
 ## Quick start
 
 ```bash
 npm install
 node src/cli.js capabilities --site http://localhost:5000
-node src/cli.js prepare --platform robinhood --file examples/robinhood-agent.json --site http://localhost:5000
-node src/cli.js prepare --platform solana --file examples/solana-agent.json --site http://localhost:5000
+node src/cli.js prepare-robinhood --file examples/robinhood-agent.json --site http://localhost:5000
+node src/cli.js mint-solana --confirm-live-mint --file examples/solana-agent.json --site http://localhost:5000
 ```
 
-The SDK offers `createAgentForge({ baseUrl })`, whose `prepare({ platform, ... })` and `inspect({ platform, ... })` methods route to the correct Cheshire site APIs.
+The SDK exposes `prepareRobinhood()` for an unsigned EVM intent, the explicitly live `mintSolana()` operation for a wallet-authorized sponsored mint, and `inspect()` for either platform. Solana mint input must contain a fresh `CLAWD_AGENT_MINT_V2` message and the owner wallet's base64 signature.
 
 ## Layout
 

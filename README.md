@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Node-%3E%3D18-5fa04e?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node.js 18 or newer">
+  <img src="https://img.shields.io/badge/Node-%3E%3D18.18-5fa04e?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node.js 18.18 or newer">
   <img src="https://img.shields.io/badge/Robinhood_Chain-46630_%2F_4663-75f58b?style=flat-square" alt="Robinhood Chain testnet 46630 and mainnet 4663">
   <img src="https://img.shields.io/badge/Solana-mainnet--beta-9f8cff?style=flat-square&logo=solana&logoColor=white" alt="Solana mainnet-beta">
   <img src="https://img.shields.io/badge/ERC--8004_REGISTRIES-DEPLOYED-f5c36b?style=flat-square" alt="ERC-8004 registries deployed">
@@ -27,7 +27,7 @@
 This repository is dual-chain despite its name. It packages a dependency-light JavaScript SDK and CLI, three open-source Solidity registries, request templates, a reusable `SKILL.md`, and safety tests. The hosted experience is [Cheshire Terminal Agent Forge](https://cheshireterminal.ai/agents/forge).
 
 > [!IMPORTANT]
-> **Deployment and availability checked July 19, 2026:** the identity, reputation, and validation registries are deployed on Robinhood Chain testnet (`46630`) and mainnet (`4663`). Identity and validation source are explorer-verified; reputation source verification remains pending. Deployment is not product enablement: the [live Cheshire registry configuration](https://cheshireterminal.ai/api/robinhood/agents/config) still returns `null` for all six contract slots, so hosted EVM preparation and registration fail closed. The [Solana health endpoint](https://cheshireterminal.ai/api/metaplex-agents/health) reports a configured `mainnet-beta` sponsored-mint backend but does not yet expose the release's required `treasuryWallet` and `mintPolicy` preflight fields. Stop before requesting a signature or submitting either chain until those trust responses match this release.
+> **Deployment and availability checked July 19, 2026:** the identity, reputation, and validation registries are deployed on Robinhood Chain testnet (`46630`) and mainnet (`4663`). Identity and validation source are explorer-verified; reputation source verification remains pending. The [live Cheshire registry configuration](https://cheshireterminal.ai/api/robinhood/agents/config) now exposes the six committed addresses, enforces `committed-manifest-only`, and reports all six runtime-code checks as trusted. The [Solana health endpoint](https://cheshireterminal.ai/api/metaplex-agents/health) reports `mainnet-beta` and discloses the sponsoring treasury, complete mint policy, authority model, holder gate, and finality policy. These are live-chain surfaces, not blanket consent: re-fetch both trust responses, review the exact action, and obtain explicit wallet confirmation immediately before any submission.
 
 ## What the repository provides
 
@@ -52,7 +52,7 @@ Public source: [repository](https://github.com/Solizardking/robinhood-agents) ·
 | **Authorization** | Review `register(agentURI)` calldata and zero value, then submit from an EVM wallet | Sign a fresh `CLAWD_AGENT_MINT_V2` message; the authenticated sponsor submits the mint |
 | **Authority** | Owner controls the NFT; `agentWallet` initially equals the owner and is cleared by transfer | User owns the Core asset; sponsoring treasury remains update authority; the permanent freeze delegate has no authority and the asset starts frozen |
 | **Result** | Receipt plus direct `ownerOf`, `agentURI`, and `getAgentWallet` reads | Confirmed signature plus asset and Agent Identity reads; registration may require a retry after a successful mint |
-| **Current hosted status** | Contracts deployed; public addresses not configured, so registration is disabled | Backend configured, but public treasury/policy preflight is incomplete; do not sign or submit |
+| **Current hosted status** | Committed addresses configured; all six registry runtime checks pass; wallet registration is available after exact review | Sponsored Core mint configured on `mainnet-beta`; treasury and policy are disclosed; treat every submission as a live mainnet write |
 
 Choose exactly one chain for each run. You can repeat the flow on the other chain later, but that creates a second, independent identity. Nothing here silently bridges assets, merges ownership, or creates one token on both chains.
 
@@ -118,13 +118,13 @@ The package requires Node.js `>=18.18`, is ESM-only, imports `node:crypto`, uses
 | `capabilities` | Shows static framework boundaries, Robinhood registry config, and Solana health | Read-only |
 | `deployments [--chain CHAIN_ID]` | Reads committed addresses, receipts, and runtime-code pins | Read-only |
 | `prepare-local-robinhood --file FILE [--chain 4663 or 46630]` | Encodes unsigned calldata against the committed canonical identity registry; defaults to testnet `46630` | Local only; no RPC or broadcast |
-| `prepare-robinhood --file FILE` (`prepare` alias) | Requests reviewable unsigned EVM calldata from Cheshire | No broadcast; currently fails closed until public registry config is enabled |
+| `prepare-robinhood --file FILE` (`prepare` alias) | Requests reviewable unsigned EVM calldata from Cheshire | No broadcast; fails closed if trusted registry configuration becomes unavailable |
 | `mint-solana --confirm-live-mint --file FILE` | Sends a signed wallet intent to the sponsored mint route | **Live Solana write** |
 | `inspect --platform robinhood --id ID [--chain CHAIN_ID]` | Reads one configured EVM identity; defaults to mainnet `4663` | Read-only |
 | `inspect --platform solana --id ASSET_ADDRESS` | Reads one Solana agent asset | Read-only |
 
 ```bash
-# Hosted unsigned EVM intent. This will fail safely while public config is null.
+# Hosted unsigned EVM intent. Re-check the returned destination and trust data.
 node src/cli.js prepare-robinhood \
   --file examples/robinhood-agent.json \
   --site https://cheshireterminal.ai
@@ -156,7 +156,7 @@ The CLI consumes an already signed Solana authorization and never invokes a wall
 | [`examples/robinhood-agent.json`](examples/robinhood-agent.json) | Complete testnet metadata input for local or hosted EVM preparation | The image and service endpoints are illustrative; review or replace them before signing |
 | [`examples/solana-agent.json`](examples/solana-agent.json) | Shape of a signed sponsored Core mint request | Intentionally non-runnable: replace every wallet placeholder with one fresh, exact authorization |
 
-The Robinhood example is safe to pass to `prepare-local-robinhood`; it creates calldata but does not submit it. The Solana example must remain a template until the live health response exposes the expected treasury, mint policy, and cluster and the owner signs the complete normalized intent.
+The Robinhood example is safe to pass to `prepare-local-robinhood`; it creates calldata but does not submit it. The Solana example must remain a template until the owner re-checks the live treasury, mint policy, and cluster, replaces every placeholder, and signs the complete normalized intent.
 
 ## JavaScript SDK
 
@@ -194,7 +194,7 @@ const forge = createAgentForge({
 
 const status = await forge.capabilities(); // read-only
 
-// Unsigned EVM intent; available after the hosted registry config is enabled.
+// Unsigned EVM intent; re-check the current trusted registry response first.
 const evmIntent = await forge.prepareRobinhood(robinhoodRegistration);
 
 // Explicit live Solana write. The input must include a fresh wallet message
@@ -356,11 +356,11 @@ The identity transaction succeeded in block `91559343`; reputation and validatio
 
 </details>
 
-### Hosted activation checklist
+### Hosted trust checklist
 
 The suite is already deployed. Do **not** rerun a deployer and create a competing identity namespace. The current application source accepts only the committed [mainnet](deployments/agent-registries-mainnet-4663.json) and [testnet](deployments/agent-registries-testnet-46630.json) manifests; runtime environment variables cannot redirect the wallet flow to another registry.
 
-After promoting the current server/frontend release, verify the public trust response:
+Before each registration, verify the current public trust response:
 
 ```bash
 curl -fsS https://cheshireterminal.ai/api/robinhood/agents/config \

@@ -10,6 +10,15 @@ import {
   loadAgentWithLocale,
   validateCatalog,
   summarizeLocales,
+  planZkOmniMessage,
+  createRelayer,
+  computeOmniNullifier,
+  randomSecretHex,
+  listRhCryptoAgentSkillIds,
+  inspectRhCryptoAgentPack,
+  getRhCryptoAgentSkillsDir,
+  clawdbotSkillsDirExportLine,
+  loadRhCryptoAgentPackIndex,
 } from "./index.js";
 
 const USAGE = `cheshire-terminal-agents <command> [options]
@@ -19,6 +28,11 @@ Agent catalog:
   agents-list
   agents-validate
   agents-show --id IDENTIFIER [--locale LOCALE]
+
+RH crypto-agent skill pack (vendored from go-bot):
+  skills-list
+  skills-inspect
+  skills-dir
 
 Read-only / unsigned forge:
   capabilities [--site URL]
@@ -30,9 +44,18 @@ Read-only / unsigned forge:
 Live write:
   mint-solana --confirm-live-mint --file signed-mint.json [--site URL]
 
+ZK Omnichain (Robinhood ↔ Solana, msgType 4 + nullifier):
+  zk-omni-plan --action TEXT [--direction robinhood-to-solana|solana-to-robinhood]
+               [--agent-id 0x..] [--controller 0xEvm] [--memo TEXT] [--secret-hex 0x..]
+  zk-omni-nullifier --context TEXT [--secret-hex 0x..]
+  zk-omni-oneshot   (same flags as plan; runs local relayer deliver)
+  zk-omni-status
+
 Environment:
   CHESHIRE_SITE_URL   default hosted API origin
-  CHESHIRE_API_KEY    optional bearer credential for hosted access`;
+  CHESHIRE_API_KEY    optional bearer credential for hosted access
+  ZK_OMNI_JOURNAL     relayer journal path (default .zk-omni-relayer/journal.jsonl)
+  CLAWDBOT_SKILLS_DIR set to skills-dir output for clawdbot RH pack discovery`;
 
 function parseArgs(values) {
   const flags = {};
@@ -98,6 +121,24 @@ try {
   } else if (command === "agents-show" || command === "show-agent") {
     if (!flags.id) throw new Error("agents-show requires --id IDENTIFIER");
     output = loadAgentWithLocale(flags.id, flags.locale || "en");
+  } else if (command === "skills-list" || command === "list-skills") {
+    const pack = loadRhCryptoAgentPackIndex();
+    output = {
+      packId: pack.id,
+      name: pack.name,
+      skillCount: pack.skillCount,
+      skillsDir: getRhCryptoAgentSkillsDir(),
+      skills: listRhCryptoAgentSkillIds(),
+      clawdbot: clawdbotSkillsDirExportLine(),
+    };
+  } else if (command === "skills-inspect" || command === "inspect-skills") {
+    output = inspectRhCryptoAgentPack();
+    if (!output.ok) process.exitCode = 1;
+  } else if (command === "skills-dir") {
+    output = {
+      CLAWDBOT_SKILLS_DIR: getRhCryptoAgentSkillsDir(),
+      export: clawdbotSkillsDirExportLine(),
+    };
   } else if (command === "capabilities") {
     output = await forge.capabilities();
   } else if (command === "deployments") {
@@ -135,6 +176,47 @@ try {
       id: flags.id,
       chainId: platform === "robinhood" ? parseChainId(flags.chain) : undefined,
     });
+  } else if (command === "zk-omni-plan") {
+    output = planZkOmniMessage({
+      direction: flags.direction || "robinhood-to-solana",
+      action: flags.action || "zk_message",
+      memo: flags.memo || "",
+      agentId: flags["agent-id"],
+      controllerAddress: flags.controller,
+      secretHex: flags["secret-hex"],
+      modelHash: flags["model-hash"],
+      context: flags.context,
+      ttlSeconds: flags.ttl ? Number(flags.ttl) : 3600,
+    });
+  } else if (command === "zk-omni-nullifier") {
+    if (!flags.context) throw new Error("zk-omni-nullifier requires --context TEXT");
+    const secretHex = flags["secret-hex"] || randomSecretHex();
+    output = {
+      context: flags.context,
+      secretProvided: Boolean(flags["secret-hex"]),
+      nullifier: computeOmniNullifier(secretHex, flags.context),
+    };
+  } else if (command === "zk-omni-oneshot") {
+    const relayer = createRelayer({
+      journalPath: process.env.ZK_OMNI_JOURNAL,
+    });
+    await relayer.init();
+    output = await relayer.oneshot({
+      direction: flags.direction || "robinhood-to-solana",
+      action: flags.action || "zk_message",
+      memo: flags.memo || "",
+      agentId: flags["agent-id"],
+      controllerAddress: flags.controller,
+      secretHex: flags["secret-hex"],
+      modelHash: flags["model-hash"],
+      context: flags.context,
+      ttlSeconds: flags.ttl ? Number(flags.ttl) : 3600,
+    });
+    if (output.status !== "delivered") process.exitCode = 1;
+  } else if (command === "zk-omni-status") {
+    const relayer = createRelayer({ journalPath: process.env.ZK_OMNI_JOURNAL });
+    await relayer.init();
+    output = relayer.status();
   } else {
     throw new Error(`Unknown command: ${command}\n\n${USAGE}`);
   }

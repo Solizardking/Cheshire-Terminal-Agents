@@ -3,7 +3,7 @@
 - Repository: `https://github.com/Solizardking/Cheshire-Terminal-Agents`
 - Package name: `cheshire-terminal-agents` (Cheshire Terminal Agents — catalog + forge)
 - CLI: `cheshire-terminal-agents` / `ct-agents` (alias `robinhood-agents`)
-- Release: npm `1.44.0+` (unified catalog + forge)
+- Release: npm `1.45.0+` (Metaplex API mint path, live feed, agent-token launch available)
 - Runtime: Node.js 18 or newer, ESM-only
 
 ```bash
@@ -74,10 +74,15 @@ const identity = await forge.inspect({ platform: "robinhood", id: "1", chainId: 
 
 Available operations:
 
-- `capabilities()` fetches both Robinhood configuration and Solana health.
+- `capabilities()` fetches both Robinhood configuration and Solana health (includes live surfaces + framework flags).
 - `prepareRobinhood(input)` requests unsigned hosted EVM calldata.
 - `prepareLocalRobinhood(input)` prepares against the committed identity-registry manifest without a network call.
-- `mintSolana(input)` performs a live hosted Solana write using an already fresh, wallet-signed `CLAWD_AGENT_MINT_V2` intent.
+- `mintSolanaPrepare(input)` preferred: Metaplex API unsigned tx (Core + Agent Identity) after a fresh `CLAWD_AGENT_MINT_V2` authorization.
+- `mintSolanaConfirm(input)` after the owner signs/submits: verifies registration and publishes to `/agents/live`.
+- `mintSolana(input)` treasury-sponsored Core mint + identity attempt (fallback when Metaplex API is unavailable).
+- `launchAgentToken(input)` wallet-signed Genesis/DBC agent token launch when policy is `available`.
+- `reportLive(input)` / `liveFeed()` dual-rail live feed helpers.
+- `clawdGate(owner)` CLAWD eligibility (`helius-das` or multi-RPC fallback).
 - `inspect({ platform, id, chainId })` reads a Robinhood identity or Solana asset.
 
 `prepare({ platform: "solana" })` deliberately rejects because the Solana route is not an unsigned preparation operation.

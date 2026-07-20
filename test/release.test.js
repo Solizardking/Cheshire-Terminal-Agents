@@ -27,11 +27,27 @@ test("package exposes deployment pins and ships standalone Foundry tooling", () 
   assert.ok(pkg.bin["cheshire-terminal-agents"]);
   assert.ok(pkg.bin["ct-agents"]);
   assert.equal(pkg.exports["./deployments"], "./src/deployments.js");
+  assert.equal(pkg.exports["./skillPack"], "./src/skillPack.js");
   assert.ok(pkg.files.includes("agents"), "catalog agents/ must ship");
   assert.ok(pkg.files.includes("locales"), "locales/ must ship");
   assert.ok(pkg.files.includes("schema"), "schema/ must ship");
+  assert.ok(pkg.files.includes("skills"), "skills/ (forge + RH pack) must ship");
   assert.ok(pkg.scripts["import:agents"]);
   assert.ok(pkg.scripts["agents:validate"]);
+  assert.ok(pkg.scripts["skills:list"]);
+  assert.ok(pkg.scripts["skills:sync"]);
+  assert.ok(
+    existsSync(path.join(packageRoot, "skills/rh-crypto-agent/pack-index.json")),
+    "RH crypto-agent pack-index must be vendored",
+  );
+  assert.ok(
+    existsSync(path.join(packageRoot, "skills/robinhood-agent-forge/SKILL.md")),
+    "forge skill must remain",
+  );
+  // npm surface must not ship go-bot binaries or build trees
+  assert.ok(!pkg.files.includes("build"));
+  assert.ok(!pkg.files.includes("dist"));
+  assert.ok(!pkg.files.includes("go-bot"));
   for (const entry of [
     "deploy/script",
     "deploy/scripts",

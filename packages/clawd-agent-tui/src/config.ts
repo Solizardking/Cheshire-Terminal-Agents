@@ -45,6 +45,8 @@ const SYSTEM_PROMPT = [
   '- `zk_inspect_config` — show ZK Shark env (RPC, program id, network, signer path)',
   '- `zk_oneshot` — run a single deterministic intent or shell out to `zk-shark-agent` when installed',
   '- `zk_read_manifest` — read MANIFEST.json / docs from CLAWD_ZK_PRIMITIVES_DIR',
+  '- `zk_omni_plan` — plan Robinhood↔Solana ZK omnichain message (msgType 4 + nullifier)',
+  '- `zk_omni_oneshot` — plan + local relayer deliver for omnichain messaging',
   '',
   '## Coding tools',
   'You also have file_read, file_write, file_edit, glob, grep, list_dir, shell, web_search, and datetime.',

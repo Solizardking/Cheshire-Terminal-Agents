@@ -9,7 +9,7 @@
   },
   "scripts": {
     "start": "tsx src/cli.ts",
-    "test": "node --import tsx --test src/**/*.test.ts",
+    "test": "node --import tsx --test src/privacy.test.ts src/tools/chain-context.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "engines": {

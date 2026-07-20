@@ -1,16 +1,7 @@
 node_modules/
-*.tgz
-
-# Foundry build products and downloaded dependencies.
-cache/
 out/
-deploy/lib/
-deploy/broadcast/
-
-# Local credentials and operator artifacts.
+cache/
+.zk-omni-relayer/
 .env
-.env.*
-!.env.example
-deploy/audits/
-
-.DS_Store
+.env.local
+*.log

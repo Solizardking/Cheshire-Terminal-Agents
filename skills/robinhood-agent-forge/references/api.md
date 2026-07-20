@@ -76,7 +76,7 @@ Call `GET /api/metaplex-agents/health`. On success, expect:
     },
     "identityRegistration": { "timing": "attempted-after-core-mint", "partialSuccessStatus": 202 },
     "finality": { "sendAndConfirmCommitment": "confirmed", "hardFinalityRequiredForHighValueReliance": true },
-    "fungibleAgentTokenLaunch": "production-paused"
+    "fungibleAgentTokenLaunch": "available"
   },
   "metadataStorageConfigured": true,
   "metadataStorage": {},
@@ -89,9 +89,9 @@ Call `GET /api/metaplex-agents/health`. On success, expect:
 }
 ```
 
-Optional features may be false. Require `success`, RPC, treasury wallet, and sponsored minting to be true. Require `treasuryWallet` to be a valid public key and to equal `mintPolicy.funding.treasuryWallet`; require the displayed payer and update authority to equal that key. Require the remaining policy values to match the action being presented. Use only the returned `network`; do not infer a cluster from an explorer link. Stop before signature if the exact treasury wallet or complete authority policy is missing. A failed health response deliberately returns `treasuryWallet: null` and is not authorization to proceed.
+Optional features may be false. Require `success` and RPC. For the Metaplex API path the user pays fees; for treasury-sponsored mint require treasury wallet and sponsored minting to be true and equal `mintPolicy.funding.treasuryWallet`. Use only the returned `network`. A failed health response deliberately returns `treasuryWallet: null` and is not authorization for the treasury path.
 
-Call `GET /api/metaplex-agents/gate/{ownerAddress}` before signature. Expect `{ "success": true, "gate": { "mint", "balance", "minimumBalance", "eligible", "source": "helius-das" } }`. At the `2026-07-19` policy snapshot, the official CLAWD mint is `8cHzQHUS2s2h8TzCmfqPKYiM4dSt4roa3n7MyRLApump` and `minimumBalance` is `1000000`; always use the live response because policy can change. Stop when `eligible` is false or the gate is unavailable.
+Call `GET /api/metaplex-agents/gate/{ownerAddress}` before signature. Expect `{ "success": true, "gate": { "mint", "balance", "minimumBalance", "eligible", "source" } }` where `source` is `helius-das` or `helius-first-solana-rpc`. Official CLAWD mint is `8cHzQHUS2s2h8TzCmfqPKYiM4dSt4roa3n7MyRLApump` and `minimumBalance` is typically `1000000`; always use the live response. Stop when `eligible` is false. If the gate is unavailable, fall back to `GET /api/helius/verify-clawd?wallet=` for display (mint routes still enforce the server gate).
 
 ## Robinhood registration
 
@@ -204,53 +204,18 @@ intent-sha256:<64 lowercase hex characters>
 
 Sign the exact message bytes with the owner's Ed25519 wallet. Encode the detached 64-byte signature as canonical base64: it must decode to 64 bytes and re-encode to the identical string. The server accepts timestamps no older than 5 minutes and no more than 30 seconds in the future. Create and sign immediately before submission. A used signature is replay-blocked; never cache, edit, or reuse it.
 
-Call `POST /api/metaplex-agents/mint` with the same normalized source fields plus `ownerPubkey`, `walletMessage`, and `walletSignature`:
+### Preferred: Metaplex API prepare → wallet sign → confirm
 
-```json
-{
-  "ownerPubkey": "BASE58_OWNER",
-  "name": "Normalized name",
-  "symbol": "AGENT",
-  "description": "Description",
-  "agentType": "general",
-  "personality": "neutral",
-  "capabilities": ["research"],
-  "imageUri": "ipfs://...",
-  "customRegistrationUri": "ipfs://...",
-  "walletMessage": "CLAWD_AGENT_MINT_V2\n...",
-  "walletSignature": "CANONICAL_BASE64"
-}
-```
+`POST /api/metaplex-agents/mint-prepare` with the same normalized source fields plus `ownerPubkey`, `walletMessage`, and `walletSignature`. On success expect `transaction` (base64), `assetAddress`, `mode: "metaplex-api"`, and `liveFeedUrl: "/agents/live"`. The owner wallet signs and submits the transaction (user pays fees). Then:
 
-The route submits immediately after policy checks; there is no second wallet prompt. A complete result is HTTP `201`. A Core mint with failed Agent Identity registration is HTTP `202` with `partial: true`:
+`POST /api/metaplex-agents/mint-confirm` with `{ assetAddress, signature, name, description, ownerWallet }` — verifies identity when indexed and publishes to the live feed.
 
-```json
-{
-  "success": true,
-  "registered": true,
-  "partial": false,
-  "gasless": true,
-  "soulbound": true,
-  "platformOwned": false,
-  "assetAddress": "...",
-  "owner": "...",
-  "payer": "...treasury...",
-  "updateAuthority": "...treasury...",
-  "funding": { "mode": "treasury-sponsored", "userPaysFees": false },
-  "assetSignerPda": "...",
-  "signature": "...",
-  "mintSignature": "...",
-  "registerSignature": "...",
-  "registrationError": null,
-  "nftUri": "...",
-  "registrationUri": "..."
-}
-```
+### Fallback: treasury-sponsored mint
 
-Surface `owner`, `payer`, `updateAuthority`, gate/funding policy, both signatures, `registered`, `partial`, and `registrationError`. Never call this an unsigned client transaction.
+`POST /api/metaplex-agents/mint` with the same fields. The route submits immediately after policy checks (treasury pays; no second wallet prompt for chain submit). A complete result is HTTP `201`. A Core mint with failed Agent Identity registration is HTTP `202` with `partial: true`. Expect `liveFeed: true` / `liveFeedUrl: "/agents/live"`.
 
-The service submits mint and registration with Solana commitment `confirmed`; do not relabel that as `finalized`. After the response, call `GET /api/metaplex-agents/fetch/{assetAddress}` and require the returned asset owner, update authority, permanent-freeze state, and `isRegisteredAgent`. If the result will support a high-value or irreversible action, independently wait for Solana `finalized` commitment as required by `mintPolicy.finality.hardFinalityRequiredForHighValueReliance`. If `registered` is false, preserve the successful mint and report partial success; do not offer operator-only `/register`, `/delegate`, or `/set-token` routes as user recovery.
+After either path, call `GET /api/metaplex-agents/fetch/{assetAddress}` and require asset ownership / registration when available. For high-value reliance, wait for Solana `finalized` as required by mint policy. Client dual-write: `POST /api/agent-explorer/report` is best-effort for `/agents/live`.
 
-## Production-paused fungible launch
+## Live agent-token launch
 
-`POST /api/metaplex-agents/launch-token` is hard-disabled in production and returns `503`. Do not invoke or advertise it. The EVM registration API likewise has no ERC-20 launch operation. Identity registration and fungible token launch are distinct capabilities.
+When health reports `fungibleAgentTokenLaunch: "available"`, `POST /api/metaplex-agents/launch-token` builds a wallet-signed DBC/Genesis launch for an agent Core asset the user owns. Send an `Idempotency-Key` header. Default `setToken: false` unless the user explicitly acknowledges irreversible binding. Confirm via `POST /api/metaplex-agents/confirm-launch` when the client holds intent metadata. The EVM registration API has no ERC-20 launch operation — RH identity remains ERC-721 only.

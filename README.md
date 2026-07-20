@@ -43,9 +43,11 @@ Hosted surfaces: [agent hub](https://cheshireterminal.ai/agents) · [agent forge
 | **JavaScript SDK** | Metadata, unsigned EVM calldata, canonical deployment pins, runtime-code checks, Solana signing envelopes, hosted calls, catalog loaders | No private-key custody, automatic wallet signing, or bundled TypeScript declarations |
 | **CLI** | Catalog list/show/validate; read-only forge discovery; local/hosted EVM prepare; explicit Solana mint | No silent EVM broadcast; no hidden live-write default |
 | **Robinhood Chain** | Identity / Reputation / Validation contracts + `4663` / `46630` manifests | Identity is ERC-721; no fungible launcher |
-| **Solana** | Owner-authorized, treasury-sponsored Metaplex Core mint + Agent Identity attempt | Hosted/policy-dependent; fungible Genesis launch paused |
-| **Agent skill** | Portable forge `SKILL.md` + references | Instruction content — pin like code |
-| **Quality gates** | Node tests (SDK, release, catalog), Foundry tests, pack checks | Tests are not a formal security audit |
+| **Solana** | Metaplex API mint (Core + Agent Identity) preferred; treasury-sponsored fallback; live feed | Wallet-signed Genesis/DBC agent-token launch available (distinct from identity) |
+| **Agent skill (forge)** | Portable forge `SKILL.md` + references under `skills/robinhood-agent-forge/` | Instruction content — pin like code |
+| **RH crypto-agent pack** | 16 open skills vendored from go-bot (`skills/rh-crypto-agent/`: launch, swap, LP, DCA, copy-trade, viem, …) | Skills only — not the Go clawdbot binary or runtime |
+| **First-class packages** | `packages/clawd-agent-tui`, `packages/headless-agent`, `packages/layerzero-omnichain`, `packages/solana-agent-trust` — mirrored at monorepo `packages/*` | Source only (no `node_modules` / `target`); chain toolchains optional |
+| **Quality gates** | Node tests (SDK, release, catalog, skill pack, packages catalog), Foundry tests, pack checks | Tests are not a formal security audit |
 
 ```mermaid
 flowchart TB
@@ -70,6 +72,37 @@ flowchart TB
 
 ```bash
 npm install cheshire-terminal-agents
+```
+
+### Robinhood crypto-agent skill pack (from go-bot)
+
+Open RH / EVM skills for clawdbot and other agent hosts live under
+`skills/rh-crypto-agent/` (pack id `rh-crypto-agent`, 16 skills). Re-sync from a
+local go-bot checkout:
+
+```bash
+npm run skills:sync   # GO_BOT_SKILLS=/path/to/go-bot/skills optional
+npm run skills:list
+npm run skills:inspect
+```
+
+Point clawdbot at the pack root (not the whole monorepo):
+
+```bash
+export CLAWDBOT_SKILLS_DIR="$(pwd)/skills/rh-crypto-agent"
+# or after npm install:
+# export CLAWDBOT_SKILLS_DIR="$(npm root)/cheshire-terminal-agents/skills/rh-crypto-agent"
+clawdbot catalog skills
+# CLI helper:
+npx cheshire-terminal-agents skills-dir
+```
+
+```js
+import {
+  listRhCryptoAgentSkillIds,
+  getRhCryptoAgentSkillsDir,
+  inspectRhCryptoAgentPack,
+} from "cheshire-terminal-agents/skillPack";
 ```
 
 ```js
@@ -112,6 +145,32 @@ npx cheshire-terminal-agents prepare-local-robinhood --file examples/robinhood-a
 ```
 
 Requires **Node.js `>=18.18`**, ESM-only.
+
+## ZK Omnichain messaging (Robinhood ↔ Solana)
+
+Nullifier-bound LayerZero messages (msgType **4**) plus a deployable relayer:
+
+```bash
+# Plan a cross-chain ZK message (no keys required)
+npx robinhood-agents zk-omni-plan --action attest --memo demo
+
+# One-shot local relayer deliver (journal + simulated chain delivery)
+npx robinhood-agents zk-omni-oneshot --action publish_attestation --memo oneshot
+
+# Long-running relayer HTTP service
+npm run zk-omni:relayer -- --port 8787
+curl -s http://127.0.0.1:8787/health
+```
+
+| Piece | Location |
+|-------|----------|
+| Messenger contract | `contracts/zk-omni/CheshireZkOmniMessenger.sol` |
+| Codec + relayer | `src/zkOmni/` |
+| Docs | [`docs/ZK_OMNI.md`](./docs/ZK_OMNI.md) |
+| Skill | `skills/zk-omni-messaging/SKILL.md` |
+| Foundry tests | `forge test --match-contract CheshireZkOmniMessengerTest` |
+
+See also `packages/clawd-agent-tui` for a terminal UI with `zk_omni_plan` / `zk_omni_oneshot` tools.
 
 ## Agent catalog
 
@@ -173,7 +232,7 @@ Import prefers monorepo paths when this package lives inside `solana-clawd`:
 
 Choose **exactly one chain** per run. A second run on the other chain creates a second independent identity — nothing bridges or merges them.
 
-Identity assets are **not** fungible agent tokens. Robinhood identity is ERC-721. Solana identity starts as Metaplex Core. Fungible Genesis launch remains production-paused.
+Identity assets are **not** fungible agent tokens. Robinhood identity is ERC-721. Solana identity is Metaplex Core + Agent Identity. Optional fungible Genesis/DBC agent-token launch is available via `/api/metaplex-agents/launch-token` after identity exists (wallet-signed; durable intents). Confirmed creations appear on [the live agents feed](https://cheshireterminal.ai/agents/live).
 
 ### CLI forge commands
 

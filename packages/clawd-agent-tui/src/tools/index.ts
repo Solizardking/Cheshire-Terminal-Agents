@@ -15,6 +15,7 @@ import {
   zkRouteIntentTool,
   zkVerifyProofShapeTool,
 } from './zk-tools.js';
+import { zkOmniOneshotTool, zkOmniPlanTool } from './zk-omni-tools.js';
 
 export const tools = [
   // Coding tools
@@ -34,6 +35,10 @@ export const tools = [
   zkInspectConfigTool,
   zkReadManifestTool,
   zkOneshotTool,
+
+  // ZK Omnichain Robinhood ↔ Solana
+  zkOmniPlanTool,
+  zkOmniOneshotTool,
 
   // OpenRouter server tools
   serverTool({ type: 'openrouter:web_search' }),

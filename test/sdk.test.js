@@ -195,7 +195,9 @@ test("does not disguise a live Solana Core mint as preparation", async () => {
   await assert.rejects(() => forge.prepare({ platform: "solana" }), /live write/);
   await assert.rejects(() => forge.prepare({ platform: "unknown" }), /platform must be/);
   assert.equal(frameworkCapabilities.robinhood.fungibleAgentTokenLaunch, false);
-  assert.equal(frameworkCapabilities.solana.fungibleAgentTokenLaunch, "production-paused");
+  assert.equal(frameworkCapabilities.solana.fungibleAgentTokenLaunch, "available");
+  assert.equal(frameworkCapabilities.solana.metaplexApiMint, true);
+  assert.equal(frameworkCapabilities.solana.liveFeedReport, true);
 });
 
 test("hosted client returns dynamic rail status and sends API authentication", async () => {

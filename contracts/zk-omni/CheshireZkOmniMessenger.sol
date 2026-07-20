@@ -44,8 +44,8 @@ contract CheshireZkOmniMessenger is ILayerZeroReceiver {
     /// @dev Optional identity registry with isAuthorized(operator, agentId).
     address public identityRegistry;
 
-    mapping(uint32 eid => bytes32 peer) public peers;
-    mapping(bytes32 nullifier => bool consumed) public consumedNullifier;
+    mapping(uint32 => bytes32) public peers;
+    mapping(bytes32 => bool) public consumedNullifier;
 
     struct ZkOmniMessage {
         uint32 srcEid;

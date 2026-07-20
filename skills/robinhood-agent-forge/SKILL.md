@@ -10,7 +10,7 @@ Open `https://cheshireterminal.ai/agents/forge` for the canonical interactive fl
 ## Choose one rail
 
 - Choose Robinhood Chain for an ERC-721 identity in the deployed ERC-8004-compatible identity, reputation, and validation suite. Prefer testnet chain `46630`. Require an explicit mainnet confirmation for chain `4663` immediately before wallet submission.
-- Choose Solana for a wallet-owned Metaplex Core asset plus an Agent Identity registration attempt. Use only the cluster returned by the current health response. Treat `mainnet-beta` as a live mainnet write and require explicit confirmation.
+- Choose Solana for a Metaplex Core asset with Agent Identity. Prefer `POST /api/metaplex-agents/mint-prepare` (Metaplex API → user-signed tx) then `mint-confirm` (live feed). Treasury-sponsored `POST /api/metaplex-agents/mint` is the fallback. Use only the cluster returned by the current health response. Treat `mainnet-beta` as a live mainnet write and require explicit confirmation.
 - Create a separate identity if the user later chooses the other chain. Link identities only through metadata after verifying control of both.
 
 Read [references/api.md](references/api.md) before calling Cheshire APIs, [references/sdk.md](references/sdk.md) before using the package, and [references/deployment.md](references/deployment.md) before trusting or deploying contracts.
@@ -23,8 +23,8 @@ Read [references/api.md](references/api.md) before calling Cheshire APIs, [refer
 4. Normalize and prepare the complete action without receiving a private key.
 5. Show the user the chain, destination contract/program, decoded action, native value or sponsorship, metadata URI, owner, payer, update authority, freeze policy, and expected finality checks.
 6. Require fresh wallet authorization only after the review. Never reuse a signed Solana intent.
-7. Submit through the correct signer model: the EVM owner wallet broadcasts Robinhood calldata; the Solana owner signs the complete intent and the disclosed treasury submits the sponsored transaction.
-8. Verify the transaction and direct chain state. Report a Solana mint whose Agent Identity registration failed as partial success.
+7. Submit through the correct signer model: the EVM owner wallet broadcasts Robinhood calldata; for Solana prefer Metaplex API prepare → owner wallet signs and submits the tx → `mint-confirm` (treasury-sponsored mint remains a fallback).
+8. Verify the transaction and direct chain state. Report a Solana mint whose Agent Identity registration failed as partial success. Confirmed agents should appear on `/agents/live` (server publish and/or `POST /api/agent-explorer/report`).
 
 Never request, store, print, or transmit a private key or seed phrase. Never silently switch a platform, network, wallet, registry, program, payer, authority, or metadata URI.
 
@@ -37,7 +37,7 @@ Never request, store, print, or transmit a private key or seed phrase. Never sil
 ## Enforce the identity-token boundary
 
 - Robinhood Agent Forge currently registers an identity ERC-721 only. It does not deploy or mint a fungible ERC-20 agent token.
-- The Solana route currently mints a Core identity asset only. The separate owner-signed Genesis fungible-token builder is production-paused. Do not call or advertise `/api/metaplex-agents/launch-token` unless a later capability response and operator policy explicitly enable it.
+- Solana identity mint (Metaplex Core + Agent Identity) is separate from fungible agent-token launch. When health reports `mintPolicy.fungibleAgentTokenLaunch === "available"`, wallet-owned agents may call `POST /api/metaplex-agents/launch-token` with a durable idempotency key. Require ownership of the Core asset, review the unsigned tx, and never treat `setToken: true` as reversible.
 - Do not describe an identity or token as an investment or promise value, yield, liquidity, or price appreciation.
 
 ## Deploy only for a new namespace

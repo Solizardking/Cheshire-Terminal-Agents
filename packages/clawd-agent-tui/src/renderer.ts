@@ -29,6 +29,8 @@ const DEFAULT_FORMATTERS: Record<string, ToolFormatter> = {
   zk_oneshot: (_n, a) => `text=${trunc(String(a.text ?? ''))}`,
   zk_read_manifest: (_n, a) => `path=${trunc(String(a.relativePath ?? 'MANIFEST.json'))}`,
   zk_inspect_config: () => '',
+  zk_omni_plan: (_n, a) => `action=${trunc(String(a.action ?? ''))}`,
+  zk_omni_oneshot: (_n, a) => `action=${trunc(String(a.action ?? ''))}`,
 };
 
 const TOOL_LABELS: Record<string, { past: string; noun: string }> = {
@@ -47,6 +49,8 @@ const TOOL_LABELS: Record<string, { past: string; noun: string }> = {
   zk_oneshot: { past: 'One-shot', noun: 'ZK op' },
   zk_inspect_config: { past: 'Inspected', noun: 'config' },
   zk_read_manifest: { past: 'Read', noun: 'manifest' },
+  zk_omni_plan: { past: 'Planned', noun: 'omni message' },
+  zk_omni_oneshot: { past: 'Relayed', noun: 'omni message' },
 };
 
 function trunc(s: string, max = 50): string {

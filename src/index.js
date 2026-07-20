@@ -40,10 +40,50 @@ export {
   summarizeLocales,
 } from "./agentCatalog.js";
 
+export {
+  PACKAGE_CATALOG,
+  listPackageIds,
+  resolvePackageDir,
+  inspectPackages,
+} from "./packagesCatalog.js";
+
+export {
+  RH_CRYPTO_AGENT_PACK_DIR,
+  RH_CRYPTO_AGENT_PACK_INDEX_PATH,
+  RH_CRYPTO_AGENT_CATALOG_PATH,
+  loadRhCryptoAgentPackIndex,
+  getRhCryptoAgentSkillsDir,
+  listRhCryptoAgentSkillIds,
+  inspectRhCryptoAgentPack,
+  loadRhCryptoAgentCatalog,
+  listSkillDirectoriesWithSkillMd,
+  clawdbotSkillsDirExportLine,
+} from "./skillPack.js";
+
+export {
+  MSG_ZK_OMNI,
+  EID_SOLANA_MAINNET,
+  EID_ROBINHOOD_MAINNET,
+  computeOmniNullifier,
+  randomSecretHex,
+  payloadCommitmentFrom,
+  encodeZkOmniMessage,
+  decodeZkOmniMessage,
+  addressToBytes32,
+  planZkOmniMessage,
+  RELAY_STATUSES,
+  ZkOmniJournal,
+  ZkOmniRelayer,
+  createRelayer,
+} from "./zkOmni/index.js";
+
 /** Published npm package identity for Cheshire Terminal Agents. */
 export const PACKAGE_NAME = "cheshire-terminal-agents";
-export const PACKAGE_VERSION = "1.44.1";
+export const PACKAGE_VERSION = "1.45.0";
 export const HUB_URL = "https://cheshireterminal.ai/agents";
+export const FORGE_URL = "https://cheshireterminal.ai/agents/forge";
+export const LIVE_FEED_URL = "https://cheshireterminal.ai/agents/live";
+export const MINT_URL = "https://cheshireterminal.ai/agents/mint";
 export const CATALOG_API = "https://cheshireterminal.ai/api/clawd/browser-agents";
 
 export const platforms = Object.freeze({
@@ -53,13 +93,17 @@ export const platforms = Object.freeze({
     testnetChainId: 46630,
     identityAsset: "ERC-721 ERC-8004 registry record",
     fungibleTokenLaunch: "not-in-this-package",
+    liveFeed: true,
   }),
   solana: Object.freeze({
     vm: "svm",
     cluster: "mainnet-beta",
     testnetCluster: "devnet",
-    identityAsset: "hosted Metaplex Core asset",
-    fungibleTokenLaunch: "production-paused",
+    identityAsset: "Metaplex Core asset + Agent Identity PDA",
+    /** Prefer Metaplex API mint-prepare → wallet sign → mint-confirm; treasury mint is fallback. */
+    mintPath: "metaplex-api-preferred",
+    fungibleTokenLaunch: "available",
+    liveFeed: true,
   }),
 });
 
@@ -70,12 +114,17 @@ export const frameworkCapabilities = Object.freeze({
     registryInfrastructureDeployment: "guarded-foundry-tooling",
     identityStandard: "ERC-8004 registration-v1 compatibility",
     fungibleAgentTokenLaunch: false,
+    liveFeedReport: true,
   }),
   solana: Object.freeze({
+    /** Official Metaplex Agent Registry API: Core asset + Agent Identity in one user-signed tx. */
+    metaplexApiMint: true,
     hostedSponsoredCoreMint: "health-and-policy-dependent",
     walletAuthorization: "CLAWD_AGENT_MINT_V2",
-    agentIdentityRegistration: "attempted-after-core-mint",
-    fungibleAgentTokenLaunch: "production-paused",
+    agentIdentityRegistration: "atomic-with-metaplex-api-or-attempted-after-core-mint",
+    fungibleAgentTokenLaunch: "available",
+    clawdGateSource: "helius-das-or-solana-rpc",
+    liveFeedReport: true,
   }),
 });
 
@@ -428,18 +477,107 @@ export function createCheshireClient({
         request("/api/robinhood/agents/config"),
         request("/api/metaplex-agents/health"),
       ]);
-      return { framework: frameworkCapabilities, robinhood, solana };
+      return {
+        framework: frameworkCapabilities,
+        platforms,
+        surfaces: {
+          hub: HUB_URL,
+          forge: FORGE_URL,
+          mint: MINT_URL,
+          live: LIVE_FEED_URL,
+        },
+        robinhood,
+        solana,
+      };
     },
     prepareRobinhood: (input) => post("/api/robinhood/agents/prepare-registration", input),
+    /**
+     * Preferred Solana path: Metaplex API builds an unsigned tx (Core + Agent Identity).
+     * Caller signs with the owner wallet, submits on-chain, then calls mintSolanaConfirm.
+     */
+    mintSolanaPrepare: (input) => {
+      const verified = assertSponsoredMintAuthorization(input);
+      return post(
+        "/api/metaplex-agents/mint-prepare",
+        serializeSponsoredMintRequest(input, verified.intent),
+      );
+    },
+    /** After wallet-signed Metaplex API mint confirms, publish to /agents/live. */
+    mintSolanaConfirm: (input) => {
+      if (!input || typeof input !== "object") throw new Error("mint confirm input is required");
+      const assetAddress = text(input.assetAddress, "assetAddress", 64);
+      return post("/api/metaplex-agents/mint-confirm", {
+        assetAddress,
+        signature: optionalText(input.signature, "signature", 200),
+        name: optionalText(input.name, "name", 64),
+        description: optionalText(input.description, "description", 600),
+        ownerWallet: optionalText(input.ownerWallet || input.ownerPubkey, "ownerWallet", 64),
+        image: optionalText(input.image || input.imageUri, "image", 500),
+        template: optionalText(input.template, "template", 128),
+      });
+    },
+    /**
+     * Treasury-sponsored Core mint + registerIdentity attempt (fallback when Metaplex API is down).
+     * Still Metaplex on-chain; still reports to the live feed.
+     */
     mintSolana: (input) => {
       const verified = assertSponsoredMintAuthorization(input);
       return post("/api/metaplex-agents/mint", serializeSponsoredMintRequest(input, verified.intent));
     },
+    /** Wallet-signed Genesis/DBC agent token launch (identity asset must already exist). */
+    launchAgentToken: (input, options = {}) => {
+      if (!input || typeof input !== "object") throw new Error("launch input is required");
+      const headers = new Headers({ "content-type": "application/json" });
+      if (apiKey) headers.set("authorization", `Bearer ${apiKey}`);
+      const idempotencyKey =
+        options.idempotencyKey ||
+        input.idempotencyKey ||
+        `launch-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      headers.set("idempotency-key", String(idempotencyKey));
+      return request("/api/metaplex-agents/launch-token", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          assetAddress: text(input.assetAddress, "assetAddress", 64),
+          tokenName: text(input.tokenName || input.name, "tokenName", 64),
+          tokenSymbol: text(input.tokenSymbol || input.symbol, "tokenSymbol", 10),
+          tokenUri: optionalText(input.tokenUri || input.uri, "tokenUri", 500),
+          userWallet: text(input.userWallet || input.ownerWallet, "userWallet", 64),
+          setToken: Boolean(input.setToken),
+          creatorFeeWallet: optionalText(input.creatorFeeWallet, "creatorFeeWallet", 64),
+        }),
+      });
+    },
+    /** Dual-rail report into the site live feed (Solana mint, RH forge, etc.). */
+    reportLive: (input) => {
+      if (!input || typeof input !== "object") throw new Error("live report input is required");
+      return post("/api/agent-explorer/report", {
+        name: text(input.name, "name", 160),
+        assetAddress: text(input.assetAddress || input.agentAddress || input.id, "assetAddress", 200),
+        description: optionalText(input.description, "description", 2000),
+        image: optionalText(input.image, "image", 500),
+        ownerWallet: optionalText(input.ownerWallet, "ownerWallet", 128),
+        signature: optionalText(input.signature, "signature", 200),
+        chain: optionalText(input.chain, "chain", 32) || "platform",
+        network: optionalText(input.network, "network", 64),
+        source: optionalText(input.source, "source", 64) || "cheshire-terminal-agents",
+        template: optionalText(input.template, "template", 128),
+        agentId: optionalText(input.agentId, "agentId", 64),
+        explorerUrl: optionalText(input.explorerUrl, "explorerUrl", 500),
+        solscanUrl: optionalText(input.solscanUrl, "solscanUrl", 500),
+        chainId: input.chainId,
+        metadata: input.metadata && typeof input.metadata === "object" ? input.metadata : undefined,
+      });
+    },
+    clawdGate: (ownerAddress) =>
+      request(`/api/metaplex-agents/gate/${encodeURIComponent(text(ownerAddress, "ownerAddress", 64))}`),
     getRobinhood: (id, chainId = 4663) => {
       getCanonicalDeployment(chainId);
       return request(`/api/robinhood/agents/${encodeURIComponent(id)}?chainId=${chainId}`);
     },
     getSolana: (asset) => request(`/api/metaplex-agents/fetch/${encodeURIComponent(asset)}`),
+    liveFeed: (limit = 50) =>
+      request(`/api/agent-explorer/feed?limit=${Math.min(Math.max(Number(limit) || 50, 1), 100)}`),
   });
 }
 
@@ -449,12 +587,18 @@ export function createAgentForge(options) {
     capabilities: client.capabilities,
     prepareRobinhood: client.prepareRobinhood,
     prepareLocalRobinhood: prepareCanonicalEvmRegistration,
+    mintSolanaPrepare: client.mintSolanaPrepare,
+    mintSolanaConfirm: client.mintSolanaConfirm,
     mintSolana: client.mintSolana,
+    launchAgentToken: client.launchAgentToken,
+    reportLive: client.reportLive,
+    clawdGate: client.clawdGate,
+    liveFeed: client.liveFeed,
     prepare: ({ platform, ...input }) => {
       if (platform === "robinhood") return client.prepareRobinhood(input);
       if (platform === "solana") {
         return Promise.reject(new Error(
-          "Solana Core minting is a live write; call mintSolana with a fresh CLAWD_AGENT_MINT_V2 authorization",
+          "Solana minting is a live write; call mintSolanaPrepare (Metaplex API) or mintSolana (treasury fallback) with a fresh CLAWD_AGENT_MINT_V2 authorization",
         ));
       }
       return Promise.reject(new Error("platform must be robinhood or solana"));

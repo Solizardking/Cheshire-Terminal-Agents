@@ -18,6 +18,7 @@ export {
 
 export {
   AGENTS_DIR,
+  LOCALES_DIR,
   SCHEMA_PATH,
   PACKAGE_ROOT,
   estimateTokenUsage,
@@ -30,6 +31,13 @@ export {
   normalizeDefiAgent,
   characterIdentifierFromStem,
   expectedCatalogIdentifiers,
+  localeCodeFromFilename,
+  listLocaleAgentIds,
+  listLocalesForAgent,
+  loadLocaleOverlay,
+  applyLocaleOverlay,
+  loadAgentWithLocale,
+  summarizeLocales,
 } from "./agentCatalog.js";
 
 export const platforms = Object.freeze({

@@ -5,6 +5,7 @@ import { dirname, join, basename, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   AGENTS_DIR,
+  LOCALES_DIR,
   SCHEMA_PATH,
   PACKAGE_ROOT,
   loadCheshireSchema,
@@ -16,12 +17,20 @@ import {
   normalizeDefiAgent,
   characterIdentifierFromStem,
   expectedCatalogIdentifiers,
+  listLocaleAgentIds,
+  listLocalesForAgent,
+  loadLocaleOverlay,
+  applyLocaleOverlay,
+  loadAgentWithLocale,
+  summarizeLocales,
+  localeCodeFromFilename,
 } from "../src/agentCatalog.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(PACKAGE_ROOT, "..");
 const CHARACTERS_DIR = join(REPO_ROOT, "agents", "characters");
 const DEFI_SRC_DIR = join(REPO_ROOT, "agents", "defi-agents", "src");
+const DEFI_LOCALES_DIR = join(REPO_ROOT, "agents", "defi-agents", "locales");
 
 function sourceCharacterStems() {
   return readdirSync(CHARACTERS_DIR)
@@ -140,5 +149,67 @@ test("loadCatalog returns schema-valid entries with matching file stems", () => 
   assert.ok(entries.length > 0);
   for (const { identifier, agent } of entries) {
     assert.equal(agent.identifier, identifier);
+  }
+});
+
+test("locales tree is synced from defi-agents/locales", () => {
+  assert.ok(existsSync(LOCALES_DIR), `locales missing at ${LOCALES_DIR}`);
+  const sourceIds = readdirSync(DEFI_LOCALES_DIR, { withFileTypes: true })
+    .filter((d) => d.isDirectory())
+    .map((d) => d.name)
+    .sort();
+  const localIds = listLocaleAgentIds();
+  assert.deepEqual(localIds, sourceIds, "locale agent folders must match source");
+
+  const summary = summarizeLocales();
+  assert.ok(summary.agentCount >= 40, `expected ~43 locale agents, got ${summary.agentCount}`);
+  assert.ok(summary.fileCount > 100, `expected hundreds of locale files, got ${summary.fileCount}`);
+  console.log(`LOCALES_PASS agents=${summary.agentCount} files=${summary.fileCount}`);
+});
+
+test("localeCodeFromFilename maps index patterns", () => {
+  assert.equal(localeCodeFromFilename("index.json"), "en");
+  assert.equal(localeCodeFromFilename("index.ja-JP.json"), "ja-JP");
+  assert.equal(localeCodeFromFilename("index.zh-CN.json"), "zh-CN");
+  assert.equal(localeCodeFromFilename("readme.md"), null);
+});
+
+test("locale overlays merge into schema-valid agents with preserved identity", () => {
+  const id = "defi-yield-farmer";
+  assert.ok(listLocaleAgentIds().includes(id));
+  const locales = listLocalesForAgent(id);
+  assert.ok(locales.includes("en"));
+  assert.ok(locales.includes("ja-JP"));
+
+  const base = JSON.parse(readFileSync(join(AGENTS_DIR, `${id}.json`), "utf8"));
+  const jaOverlay = loadLocaleOverlay(id, "ja-JP");
+  assert.ok(jaOverlay?.config?.systemRole);
+  assert.match(jaOverlay.config.systemRole, /利回り|DeFi/);
+
+  const merged = applyLocaleOverlay(base, jaOverlay);
+  const result = validateCheshireAgent(merged);
+  assert.equal(result.ok, true, (result.errors || []).join("; "));
+  assert.equal(merged.identifier, id);
+  assert.equal(merged.author, base.author);
+  assert.equal(merged.schemaVersion, base.schemaVersion);
+  assert.match(merged.config.systemRole, /利回り|あなたは/);
+  assert.match(merged.meta.title, /利回り|農業|戦略/);
+});
+
+test("loadAgentWithLocale returns localized systemRole for non-en locales", () => {
+  const id = "defi-yield-farmer";
+  const en = loadAgentWithLocale(id, "en");
+  const ja = loadAgentWithLocale(id, "ja-JP");
+  assert.equal(en.identifier, id);
+  assert.equal(ja.identifier, id);
+  assert.notEqual(ja.config.systemRole, en.config.systemRole);
+  assert.match(ja.config.systemRole, /あなたは|利回り/);
+  assert.equal(validateCheshireAgent(ja).ok, true);
+});
+
+test("every locale agent folder has a matching catalog agent", () => {
+  const catalog = new Set(listCatalogIdentifiers());
+  for (const id of listLocaleAgentIds()) {
+    assert.ok(catalog.has(id), `locale agent ${id} missing from agents/ catalog`);
   }
 });

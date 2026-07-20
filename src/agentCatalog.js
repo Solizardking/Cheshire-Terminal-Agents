@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const PACKAGE_ROOT = join(__dirname, "..");
 export const AGENTS_DIR = join(PACKAGE_ROOT, "agents");
+export const LOCALES_DIR = join(PACKAGE_ROOT, "locales");
 export const SCHEMA_PATH = join(PACKAGE_ROOT, "schema", "Cheshire_agent_schema.json");
 
 const ROOT_ALLOWED = new Set([
@@ -614,4 +615,165 @@ export function normalizeDefiAgent(source, identifier) {
  */
 export function expectedCatalogIdentifiers(characterStems, defiStems) {
   return [...new Set([...characterStems.map(characterIdentifierFromStem), ...defiStems])].sort();
+}
+
+/**
+ * Parse a locale filename into a locale code.
+ * index.json → "en" (default)
+ * index.ja-JP.json → "ja-JP"
+ * @param {string} filename
+ * @returns {string|null}
+ */
+export function localeCodeFromFilename(filename) {
+  if (filename === "index.json") return "en";
+  const match = /^index\.(.+)\.json$/.exec(filename);
+  return match ? match[1] : null;
+}
+
+/**
+ * List agent identifiers that have a locales/ directory entry.
+ * @param {string} [dir]
+ * @returns {string[]}
+ */
+export function listLocaleAgentIds(dir = LOCALES_DIR) {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((d) => d.isDirectory())
+    .map((d) => d.name)
+    .sort();
+}
+
+/**
+ * List available locale codes for an agent.
+ * @param {string} identifier
+ * @param {string} [dir]
+ * @returns {string[]}
+ */
+export function listLocalesForAgent(identifier, dir = LOCALES_DIR) {
+  const agentDir = join(dir, identifier);
+  if (!existsSync(agentDir)) return [];
+  return readdirSync(agentDir)
+    .map(localeCodeFromFilename)
+    .filter(Boolean)
+    .sort();
+}
+
+/**
+ * Load a partial locale overlay (config/meta/examples/summary only).
+ * @param {string} identifier
+ * @param {string} [locale] locale code; "en" or omitted loads index.json
+ * @param {string} [dir]
+ * @returns {object|null}
+ */
+export function loadLocaleOverlay(identifier, locale = "en", dir = LOCALES_DIR) {
+  const agentDir = join(dir, identifier);
+  const filename = !locale || locale === "en" ? "index.json" : `index.${locale}.json`;
+  const path = join(agentDir, filename);
+  if (!existsSync(path)) return null;
+  return JSON.parse(readFileSync(path, "utf8"));
+}
+
+/**
+ * Deep-merge a locale overlay onto a base Cheshire agent.
+ * Preserves identity fields (author, identifier, schemaVersion, …) from base;
+ * overlays config/meta/examples/summary/opening* when present in locale.
+ * @param {object} baseAgent
+ * @param {object} overlay
+ * @returns {object}
+ */
+export function applyLocaleOverlay(baseAgent, overlay) {
+  if (!baseAgent || typeof baseAgent !== "object") {
+    throw new Error("baseAgent is required");
+  }
+  if (!overlay || typeof overlay !== "object") {
+    return structuredClone(baseAgent);
+  }
+
+  const merged = structuredClone(baseAgent);
+
+  if (overlay.config && typeof overlay.config === "object") {
+    merged.config = { ...merged.config, ...overlay.config };
+    // Strip unexpected config keys after merge
+    for (const key of Object.keys(merged.config)) {
+      if (!CONFIG_ALLOWED.has(key)) delete merged.config[key];
+    }
+  }
+
+  if (overlay.meta && typeof overlay.meta === "object") {
+    merged.meta = { ...merged.meta, ...overlay.meta };
+    // Preserve avatar from base when locale omits it
+    if (!merged.meta.avatar && baseAgent.meta?.avatar) {
+      merged.meta.avatar = baseAgent.meta.avatar;
+    }
+    for (const key of Object.keys(merged.meta)) {
+      if (!META_ALLOWED.has(key)) delete merged.meta[key];
+    }
+  }
+
+  if (Array.isArray(overlay.examples)) {
+    merged.examples = overlay.examples;
+  }
+  if (typeof overlay.summary === "string") {
+    merged.summary = overlay.summary;
+  }
+  if (typeof overlay.openingMessage === "string") {
+    merged.openingMessage = overlay.openingMessage;
+  }
+  if (Array.isArray(overlay.openingQuestions)) {
+    merged.openingQuestions = overlay.openingQuestions;
+  }
+
+  // Recompute token usage from localized system role when present
+  if (merged.config?.systemRole) {
+    merged.tokenUsage = estimateTokenUsage(merged.config.systemRole, merged.meta?.description);
+  }
+
+  return merged;
+}
+
+/**
+ * Load a catalog agent with an optional locale overlay applied.
+ * @param {string} identifier
+ * @param {string} [locale]
+ * @param {{ agentsDir?: string, localesDir?: string }} [opts]
+ * @returns {object}
+ */
+export function loadAgentWithLocale(identifier, locale = "en", opts = {}) {
+  const agentsDir = opts.agentsDir ?? AGENTS_DIR;
+  const localesDir = opts.localesDir ?? LOCALES_DIR;
+  const basePath = join(agentsDir, `${identifier}.json`);
+  if (!existsSync(basePath)) {
+    throw new Error(`Agent not found in catalog: ${identifier}`);
+  }
+  const base = JSON.parse(readFileSync(basePath, "utf8"));
+  if (!locale || locale === "en") {
+    // Prefer locales/en (index.json) when present; else catalog base
+    const enOverlay = loadLocaleOverlay(identifier, "en", localesDir);
+    return enOverlay ? applyLocaleOverlay(base, enOverlay) : base;
+  }
+  const overlay = loadLocaleOverlay(identifier, locale, localesDir);
+  if (!overlay) {
+    throw new Error(`Locale "${locale}" not found for agent ${identifier}`);
+  }
+  return applyLocaleOverlay(base, overlay);
+}
+
+/**
+ * Summarize locale tree coverage for agents that have locales.
+ * @param {string} [dir]
+ * @returns {{ agentCount: number, fileCount: number, byAgent: Record<string, string[]> }}
+ */
+export function summarizeLocales(dir = LOCALES_DIR) {
+  const byAgent = {};
+  let fileCount = 0;
+  for (const id of listLocaleAgentIds(dir)) {
+    const locales = listLocalesForAgent(id, dir);
+    byAgent[id] = locales;
+    fileCount += locales.length;
+  }
+  return {
+    agentCount: Object.keys(byAgent).length,
+    fileCount,
+    byAgent,
+  };
 }

@@ -1,30 +1,48 @@
 #!/usr/bin/env node
 /**
  * Import character + DeFi agents into robinhood-agents/agents as Cheshire-schema JSON.
+ * Also syncs i18n locale overlays from agents/defi-agents/locales.
  *
  * Sources:
  *   - agents/characters/*.json (except package.json)
  *   - agents/defi-agents/src/*.json
+ *   - agents/defi-agents/locales/<id>/index*.json
  * Schema:
  *   - agents/defi-agents/schema/Cheshire_agent_schema.json (vendored under schema/)
  */
-import { copyFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import {
+  copyFileSync,
+  cpSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+  existsSync,
+} from "node:fs";
 import { dirname, join, basename, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   AGENTS_DIR,
+  LOCALES_DIR,
   PACKAGE_ROOT,
   SCHEMA_PATH,
   convertCharacterToCheshireAgent,
   normalizeDefiAgent,
   validateCheshireAgent,
   characterIdentifierFromStem,
+  summarizeLocales,
+  applyLocaleOverlay,
+  loadLocaleOverlay,
+  listLocaleAgentIds,
+  listLocalesForAgent,
 } from "../src/agentCatalog.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(PACKAGE_ROOT, "..");
 const CHARACTERS_DIR = join(REPO_ROOT, "agents", "characters");
 const DEFI_SRC_DIR = join(REPO_ROOT, "agents", "defi-agents", "src");
+const DEFI_LOCALES_DIR = join(REPO_ROOT, "agents", "defi-agents", "locales");
 const DEFI_SCHEMA = join(REPO_ROOT, "agents", "defi-agents", "schema", "Cheshire_agent_schema.json");
 
 function ensureSchema() {
@@ -40,6 +58,53 @@ function listJsonStems(dir, exclude = new Set()) {
     .filter((f) => f.endsWith(".json") && !exclude.has(f))
     .map((f) => basename(f, ".json"))
     .sort();
+}
+
+/**
+ * Mirror agents/defi-agents/locales → robinhood-agents/locales.
+ * Replaces destination tree for a clean sync.
+ */
+function importLocales() {
+  if (!existsSync(DEFI_LOCALES_DIR)) {
+    throw new Error(`Missing locales source at ${DEFI_LOCALES_DIR}`);
+  }
+  if (existsSync(LOCALES_DIR)) {
+    rmSync(LOCALES_DIR, { recursive: true, force: true });
+  }
+  mkdirSync(dirname(LOCALES_DIR), { recursive: true });
+  cpSync(DEFI_LOCALES_DIR, LOCALES_DIR, { recursive: true });
+  return summarizeLocales(LOCALES_DIR);
+}
+
+/**
+ * Spot-check that localized agents merge onto catalog base and stay schema-valid.
+ */
+function validateLocaleMerges(sampleLocales = ["ja-JP", "zh-CN", "es-ES", "de-DE"]) {
+  const failures = [];
+  let checked = 0;
+  for (const id of listLocaleAgentIds()) {
+    const basePath = join(AGENTS_DIR, `${id}.json`);
+    if (!existsSync(basePath)) {
+      failures.push({ identifier: id, error: "locale agent missing from catalog" });
+      continue;
+    }
+    const base = JSON.parse(readFileSync(basePath, "utf8"));
+    for (const locale of listLocalesForAgent(id)) {
+      if (locale !== "en" && !sampleLocales.includes(locale)) continue;
+      const overlay = loadLocaleOverlay(id, locale);
+      if (!overlay) {
+        failures.push({ identifier: id, locale, error: "overlay load failed" });
+        continue;
+      }
+      const merged = applyLocaleOverlay(base, overlay);
+      const result = validateCheshireAgent(merged);
+      checked += 1;
+      if (!result.ok) {
+        failures.push({ identifier: id, locale, error: result.errors.join("; ") });
+      }
+    }
+  }
+  return { checked, failures };
 }
 
 function main() {
@@ -85,14 +150,40 @@ function main() {
     }
   }
 
+  let localesSummary;
+  let localeMerge;
+  try {
+    localesSummary = importLocales();
+    localeMerge = validateLocaleMerges();
+    if (localeMerge.failures.length > 0) {
+      results.failed.push(
+        ...localeMerge.failures.map((f) => ({
+          identifier: f.identifier,
+          source: "locale",
+          error: `${f.locale || "n/a"}: ${f.error}`,
+        })),
+      );
+    }
+  } catch (err) {
+    results.failed.push({ identifier: "locales", source: "locale", error: err.message });
+  }
+
   const summary = {
     schema: SCHEMA_PATH,
     agentsDir: AGENTS_DIR,
+    localesDir: LOCALES_DIR,
     characterSourceCount: characterStems.length,
     defiSourceCount: defiStems.length,
     written: results.written.length,
     failed: results.failed.length,
     identifiers: results.written.map((w) => w.identifier).sort(),
+    locales: localesSummary
+      ? {
+          agentCount: localesSummary.agentCount,
+          fileCount: localesSummary.fileCount,
+          mergeChecks: localeMerge?.checked ?? 0,
+        }
+      : null,
     failures: results.failed,
   };
 

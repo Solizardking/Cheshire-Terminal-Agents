@@ -122,10 +122,23 @@ contract CheshireZkOmniMessengerTest is Test {
         assertTrue(messengerB.isNullifierConsumed(nullifier));
         assertEq(messengerB.deliveredCount(), 1);
         assertEq(messengerB.lastSrcEid(), EID_A);
+        assertEq(messengerB.lastGuid(), keccak256("guid-1"));
 
-        (,, bytes32 lastAgent,,,,,,,,,,) = _unpackLast(messengerB);
-        // lastMessage is a public struct getter with multiple return values
+        (
+            uint32 srcEid,
+            ,
+            bytes32 lastAgent,
+            ,
+            bytes32 lastNullifier,
+            ,
+            ,
+            ,
+            string memory lastAction,
+        ) = messengerB.lastMessage();
+        assertEq(srcEid, EID_A);
         assertEq(lastAgent, agentId);
+        assertEq(lastNullifier, nullifier);
+        assertEq(lastAction, "publish_attestation");
     }
 
     function test_nullifierReplayRejectedOnReceive() public {
@@ -213,34 +226,4 @@ contract CheshireZkOmniMessengerTest is Test {
         );
     }
 
-    /// helper: access lastMessage agentId without huge tuple noise
-    function _unpackLast(CheshireZkOmniMessenger m)
-        internal
-        view
-        returns (
-            uint32 srcEid,
-            bytes32 guid,
-            bytes32 agentId,
-            bytes32 controller,
-            bytes32 nullifier,
-            bytes32 payloadCommitment,
-            bytes32 modelHash,
-            uint64 expiresAt,
-            string memory action,
-            string memory memo
-        )
-    {
-        (
-            srcEid,
-            guid,
-            agentId,
-            controller,
-            nullifier,
-            payloadCommitment,
-            modelHash,
-            expiresAt,
-            action,
-            memo
-        ) = m.lastMessage();
-    }
 }

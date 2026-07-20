@@ -1,0 +1,18 @@
+{
+  "name": "@cheshire/headless-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Headless Solana + Robinhood EVM agent harness — confidential, zero local retention",
+  "bin": {
+    "cheshire-headless": "./src/cli.ts"
+  },
+  "scripts": {
+    "start": "tsx src/cli.ts",
+    "test": "node --import tsx --test src/**/*.test.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

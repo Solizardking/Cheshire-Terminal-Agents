@@ -13,23 +13,22 @@ import {
 /**
  * @title CheshireZkOmniMessenger
  * @notice Zero-knowledge omnichain messenger for Robinhood Chain ↔ Solana.
- * @dev Message type 4 carries a domain-separated nullifier for anti-replay.
- *      LayerZero authenticates the remote peer; this contract enforces:
- *        - peer allowlist
- *        - nullifier uniqueness (consumedNullifier)
- *        - expiry
- *        - optional agent identity authorization on send
+ * @dev Message type 4 carries:
+ *        - nullifier bound to proofPubkey (ZK relation checked off-chain + binding hash on-chain)
+ *        - Ed25519 proof (64 bytes) over public inputs
+ *        - payloadCommitment + modelHash
  *
- *      Payload layout (abi.encode):
- *        uint16  msgType            // = 4
- *        bytes32 agentId
- *        bytes32 controller
- *        bytes32 nullifier
- *        bytes32 payloadCommitment
- *        bytes32 modelHash
- *        uint64  expiresAt
- *        string  action
- *        string  memo
+ *      On-chain checks (gas-bounded):
+ *        - peer allowlist (LayerZero path auth)
+ *        - nullifier uniqueness
+ *        - expiry / field bounds
+ *        - proof length == 64
+ *        - proofPubkey nonzero
+ *        - nullifier == keccak256(abi.encodePacked(NF_DOMAIN, proofPubkey, binding))
+ *          where binding = keccak256(abi.encodePacked(agentId, payloadCommitment, modelHash))
+ *
+ *      Full Ed25519 verification is performed by the relayer before delivery;
+ *      Solana program verifies via ed25519 precompile path in client composition.
  */
 contract CheshireZkOmniMessenger is ILayerZeroReceiver {
     uint16 public constant MSG_ZK_OMNI = 4;
@@ -37,11 +36,12 @@ contract CheshireZkOmniMessenger is ILayerZeroReceiver {
     uint32 public constant ROBINHOOD_EID = 30416;
     uint256 public constant MAX_ACTION_LENGTH = 64;
     uint256 public constant MAX_MEMO_LENGTH = 200;
+    uint256 public constant PROOF_LENGTH = 64;
+
+    bytes32 public constant NF_DOMAIN = keccak256("clawd-zk-omni-nullifier:v1");
 
     ILayerZeroEndpointV2 public immutable endpoint;
     address public owner;
-
-    /// @dev Optional identity registry with isAuthorized(operator, agentId).
     address public identityRegistry;
 
     mapping(uint32 => bytes32) public peers;
@@ -55,9 +55,11 @@ contract CheshireZkOmniMessenger is ILayerZeroReceiver {
         bytes32 nullifier;
         bytes32 payloadCommitment;
         bytes32 modelHash;
+        bytes32 proofPubkey;
         uint64 expiresAt;
         string action;
         string memo;
+        bytes32 proofHash;
     }
 
     ZkOmniMessage public lastMessage;
@@ -74,6 +76,7 @@ contract CheshireZkOmniMessenger is ILayerZeroReceiver {
         bytes32 agentId,
         address controller,
         bytes32 payloadCommitment,
+        bytes32 proofPubkey,
         string action
     );
     event ZkOmniReceived(
@@ -83,6 +86,8 @@ contract CheshireZkOmniMessenger is ILayerZeroReceiver {
         bytes32 agentId,
         bytes32 controller,
         bytes32 payloadCommitment,
+        bytes32 proofPubkey,
+        bytes32 proofHash,
         string action
     );
 
@@ -98,7 +103,8 @@ contract CheshireZkOmniMessenger is ILayerZeroReceiver {
     error IntentTextTooLong();
     error InvalidAgentId();
     error InvalidController();
-    error FeeTooLow();
+    error InvalidProof();
+    error InvalidProofRelation();
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
@@ -128,18 +134,39 @@ contract CheshireZkOmniMessenger is ILayerZeroReceiver {
         owner = newOwner;
     }
 
+    /// @notice ZK binding: nullifier must equal domain-separated hash of (proofPubkey, binding).
+    function expectedNullifier(bytes32 proofPubkey, bytes32 agentId, bytes32 payloadCommitment, bytes32 modelHash)
+        public
+        pure
+        returns (bytes32)
+    {
+        bytes32 binding = keccak256(abi.encodePacked(agentId, payloadCommitment, modelHash));
+        return keccak256(abi.encodePacked(NF_DOMAIN, proofPubkey, binding));
+    }
+
     function encodeZkOmni(
         bytes32 agentId,
         bytes32 controller,
         bytes32 nullifier,
         bytes32 payloadCommitment,
         bytes32 modelHash,
+        bytes32 proofPubkey,
         uint64 expiresAt,
         string calldata action,
-        string calldata memo
+        string calldata memo,
+        bytes calldata proof
     ) external pure returns (bytes memory) {
         return _encode(
-            agentId, controller, nullifier, payloadCommitment, modelHash, expiresAt, action, memo
+            agentId,
+            controller,
+            nullifier,
+            payloadCommitment,
+            modelHash,
+            proofPubkey,
+            expiresAt,
+            action,
+            memo,
+            proof
         );
     }
 
@@ -149,13 +176,15 @@ contract CheshireZkOmniMessenger is ILayerZeroReceiver {
         bytes32 nullifier,
         bytes32 payloadCommitment,
         bytes32 modelHash,
+        bytes32 proofPubkey,
         uint64 expiresAt,
         string calldata action,
         string calldata memo,
+        bytes calldata proof,
         bytes calldata options,
         bool payInLzToken
     ) external view returns (MessagingFee memory) {
-        _assertSendable(agentId, nullifier, expiresAt, action, memo);
+        _assertSendable(agentId, nullifier, proofPubkey, expiresAt, action, memo, proof, payloadCommitment, modelHash);
         bytes32 peer = peers[dstEid];
         if (peer == bytes32(0)) revert InvalidPeer();
         bytes memory message = _encode(
@@ -164,9 +193,11 @@ contract CheshireZkOmniMessenger is ILayerZeroReceiver {
             nullifier,
             payloadCommitment,
             modelHash,
+            proofPubkey,
             expiresAt,
             action,
-            memo
+            memo,
+            proof
         );
         return endpoint.quote(
             MessagingParams({
@@ -186,17 +217,18 @@ contract CheshireZkOmniMessenger is ILayerZeroReceiver {
         bytes32 nullifier,
         bytes32 payloadCommitment,
         bytes32 modelHash,
+        bytes32 proofPubkey,
         uint64 expiresAt,
         string calldata action,
         string calldata memo,
+        bytes calldata proof,
         bytes calldata options,
         MessagingFee calldata /* fee */
     ) external payable returns (MessagingReceipt memory receipt) {
-        _assertSendable(agentId, nullifier, expiresAt, action, memo);
+        _assertSendable(agentId, nullifier, proofPubkey, expiresAt, action, memo, proof, payloadCommitment, modelHash);
         bytes32 peer = peers[dstEid];
         if (peer == bytes32(0)) revert InvalidPeer();
 
-        // Consume nullifier on source to prevent double-send of the same proof.
         if (consumedNullifier[nullifier]) revert NullifierReplay();
         consumedNullifier[nullifier] = true;
 
@@ -206,9 +238,11 @@ contract CheshireZkOmniMessenger is ILayerZeroReceiver {
             nullifier,
             payloadCommitment,
             modelHash,
+            proofPubkey,
             expiresAt,
             action,
-            memo
+            memo,
+            proof
         );
 
         receipt = endpoint.send{value: msg.value}(
@@ -223,11 +257,10 @@ contract CheshireZkOmniMessenger is ILayerZeroReceiver {
         );
 
         emit ZkOmniSent(
-            dstEid, receipt.guid, nullifier, agentId, msg.sender, payloadCommitment, action
+            dstEid, receipt.guid, nullifier, agentId, msg.sender, payloadCommitment, proofPubkey, action
         );
     }
 
-    /// @inheritdoc ILayerZeroReceiver
     function lzReceive(
         Origin calldata origin,
         bytes32 guid,
@@ -246,24 +279,33 @@ contract CheshireZkOmniMessenger is ILayerZeroReceiver {
             bytes32 nullifier,
             bytes32 payloadCommitment,
             bytes32 modelHash,
+            bytes32 proofPubkey,
             uint64 expiresAt,
             string memory action,
-            string memory memo
+            string memory memo,
+            bytes memory proof
         ) = abi.decode(
-            message, (uint16, bytes32, bytes32, bytes32, bytes32, bytes32, uint64, string, string)
+            message,
+            (uint16, bytes32, bytes32, bytes32, bytes32, bytes32, bytes32, uint64, string, string, bytes)
         );
 
         if (msgType != MSG_ZK_OMNI) revert InvalidMessageType();
         if (agentId == bytes32(0)) revert InvalidAgentId();
         if (controller == bytes32(0)) revert InvalidController();
         if (nullifier == bytes32(0)) revert InvalidNullifier();
+        if (proofPubkey == bytes32(0)) revert InvalidProof();
+        if (proof.length != PROOF_LENGTH) revert InvalidProof();
         if (expiresAt <= block.timestamp) revert IntentExpired();
         if (bytes(action).length > MAX_ACTION_LENGTH || bytes(memo).length > MAX_MEMO_LENGTH) {
             revert IntentTextTooLong();
         }
+        if (expectedNullifier(proofPubkey, agentId, payloadCommitment, modelHash) != nullifier) {
+            revert InvalidProofRelation();
+        }
         if (consumedNullifier[nullifier]) revert NullifierReplay();
         consumedNullifier[nullifier] = true;
 
+        bytes32 proofHash = keccak256(proof);
         lastGuid = guid;
         lastSrcEid = origin.srcEid;
         lastMessage = ZkOmniMessage({
@@ -274,14 +316,24 @@ contract CheshireZkOmniMessenger is ILayerZeroReceiver {
             nullifier: nullifier,
             payloadCommitment: payloadCommitment,
             modelHash: modelHash,
+            proofPubkey: proofPubkey,
             expiresAt: expiresAt,
             action: action,
-            memo: memo
+            memo: memo,
+            proofHash: proofHash
         });
         deliveredCount += 1;
 
         emit ZkOmniReceived(
-            origin.srcEid, guid, nullifier, agentId, controller, payloadCommitment, action
+            origin.srcEid,
+            guid,
+            nullifier,
+            agentId,
+            controller,
+            payloadCommitment,
+            proofPubkey,
+            proofHash,
+            action
         );
     }
 
@@ -290,27 +342,34 @@ contract CheshireZkOmniMessenger is ILayerZeroReceiver {
     }
 
     function nextNonce(uint32, bytes32) external pure returns (uint64) {
-        return 0; // unordered delivery; nullifier is the replay key
+        return 0;
     }
 
     function isNullifierConsumed(bytes32 nullifier) external view returns (bool) {
         return consumedNullifier[nullifier];
     }
 
-    // -------- internals --------
-
     function _assertSendable(
         bytes32 agentId,
         bytes32 nullifier,
+        bytes32 proofPubkey,
         uint64 expiresAt,
         string calldata action,
-        string calldata memo
+        string calldata memo,
+        bytes calldata proof,
+        bytes32 payloadCommitment,
+        bytes32 modelHash
     ) internal view {
         if (agentId == bytes32(0)) revert InvalidAgentId();
         if (nullifier == bytes32(0)) revert InvalidNullifier();
+        if (proofPubkey == bytes32(0)) revert InvalidProof();
+        if (proof.length != PROOF_LENGTH) revert InvalidProof();
         if (expiresAt <= block.timestamp) revert IntentExpired();
         if (bytes(action).length > MAX_ACTION_LENGTH || bytes(memo).length > MAX_MEMO_LENGTH) {
             revert IntentTextTooLong();
+        }
+        if (expectedNullifier(proofPubkey, agentId, payloadCommitment, modelHash) != nullifier) {
+            revert InvalidProofRelation();
         }
         if (identityRegistry != address(0)) {
             (bool ok, bytes memory ret) = identityRegistry.staticcall(
@@ -326,9 +385,11 @@ contract CheshireZkOmniMessenger is ILayerZeroReceiver {
         bytes32 nullifier,
         bytes32 payloadCommitment,
         bytes32 modelHash,
+        bytes32 proofPubkey,
         uint64 expiresAt,
         string memory action,
-        string memory memo
+        string memory memo,
+        bytes memory proof
     ) internal pure returns (bytes memory) {
         return abi.encode(
             MSG_ZK_OMNI,
@@ -337,9 +398,11 @@ contract CheshireZkOmniMessenger is ILayerZeroReceiver {
             nullifier,
             payloadCommitment,
             modelHash,
+            proofPubkey,
             expiresAt,
             action,
-            memo
+            memo,
+            proof
         );
     }
 }

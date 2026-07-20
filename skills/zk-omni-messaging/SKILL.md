@@ -48,8 +48,14 @@ curl -s localhost:8787/health
 
 Nullifier replay is rejected at observe time.
 
+## Product hosts
+
+- FunPump: `https://funpump.ai`
+- Cheshire: `https://cheshireterminal.ai`
+
 ## Related
 
+- Contract-focused skill: `cheshire-zk-omni`
 - Existing authenticated-intent OApp (msgType 3): `my-lz-oapp/contracts/CheshireOmnichainOApp.sol`
 - ZK Shark agent TUI: `packages/clawd-agent-tui`
 - LayerZero notes: `packages/layerzero-omnichain/README.md`

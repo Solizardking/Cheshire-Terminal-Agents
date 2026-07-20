@@ -16,6 +16,22 @@ export {
   inspectCanonicalRuntimeCode,
 };
 
+export {
+  AGENTS_DIR,
+  SCHEMA_PATH,
+  PACKAGE_ROOT,
+  estimateTokenUsage,
+  loadCheshireSchema,
+  validateCheshireAgent,
+  listCatalogIdentifiers,
+  loadCatalog,
+  validateCatalog,
+  convertCharacterToCheshireAgent,
+  normalizeDefiAgent,
+  characterIdentifierFromStem,
+  expectedCatalogIdentifiers,
+} from "./agentCatalog.js";
+
 export const platforms = Object.freeze({
   robinhood: Object.freeze({
     vm: "evm",

@@ -27,14 +27,18 @@
   },
   "exports": {
     ".": "./src/index.js",
+    "./agentCatalog": "./src/agentCatalog.js",
     "./deployments": "./src/deployments.js",
     "./deployments/mainnet-4663": "./deployments/agent-registries-mainnet-4663.json",
     "./deployments/testnet-46630": "./deployments/agent-registries-testnet-46630.json",
+    "./schema/Cheshire_agent_schema.json": "./schema/Cheshire_agent_schema.json",
     "./package.json": "./package.json"
   },
   "scripts": {
+    "import:agents": "node scripts/import-agents.mjs",
+    "validate:agents": "node --test test/agents-catalog.test.js",
     "test": "node --test test/*.test.js deploy/test/*.test.cjs",
-    "check": "node --check src/index.js && node --check src/deployments.js && node --check src/cli.js && node --check deploy/scripts/deployment-safety.cjs && npm test",
+    "check": "node --check src/index.js && node --check src/deployments.js && node --check src/agentCatalog.js && node --check src/cli.js && node --check deploy/scripts/deployment-safety.cjs && npm test",
     "setup:solidity": "forge install foundry-rs/forge-std@v1.9.6 --no-git --shallow",
     "test:solidity": "forge test -vv",
     "pack:check": "npm pack --dry-run"
@@ -51,6 +55,9 @@
   },
   "files": [
     "src",
+    "agents",
+    "schema",
+    "scripts/import-agents.mjs",
     "contracts",
     "deploy/script",
     "deploy/scripts",

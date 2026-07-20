@@ -1,0 +1,144 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { dirname, join, basename, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  AGENTS_DIR,
+  SCHEMA_PATH,
+  PACKAGE_ROOT,
+  loadCheshireSchema,
+  listCatalogIdentifiers,
+  loadCatalog,
+  validateCheshireAgent,
+  validateCatalog,
+  convertCharacterToCheshireAgent,
+  normalizeDefiAgent,
+  characterIdentifierFromStem,
+  expectedCatalogIdentifiers,
+} from "../src/agentCatalog.js";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = resolve(PACKAGE_ROOT, "..");
+const CHARACTERS_DIR = join(REPO_ROOT, "agents", "characters");
+const DEFI_SRC_DIR = join(REPO_ROOT, "agents", "defi-agents", "src");
+
+function sourceCharacterStems() {
+  return readdirSync(CHARACTERS_DIR)
+    .filter((f) => f.endsWith(".json") && f !== "package.json")
+    .map((f) => basename(f, ".json"))
+    .sort();
+}
+
+function sourceDefiStems() {
+  return readdirSync(DEFI_SRC_DIR)
+    .filter((f) => f.endsWith(".json"))
+    .map((f) => basename(f, ".json"))
+    .sort();
+}
+
+test("Cheshire schema is vendored under robinhood-agents", () => {
+  assert.ok(existsSync(SCHEMA_PATH), `schema missing at ${SCHEMA_PATH}`);
+  const schema = loadCheshireSchema();
+  assert.equal(schema.type, "object");
+  assert.ok(Array.isArray(schema.required));
+  assert.ok(schema.required.includes("config"));
+  assert.ok(schema.required.includes("identifier"));
+  assert.ok(schema.properties?.config?.required?.includes("systemRole"));
+  assert.ok(schema.properties?.meta?.required?.includes("title"));
+});
+
+test("catalog contains every character + defi source identifier", () => {
+  const characterStems = sourceCharacterStems();
+  const defiStems = sourceDefiStems();
+  assert.equal(characterStems.length, 10, "expected 10 character agents (excluding package.json)");
+  assert.ok(defiStems.length >= 40, `expected ~43 defi agents, got ${defiStems.length}`);
+
+  const expected = expectedCatalogIdentifiers(characterStems, defiStems);
+  const actual = listCatalogIdentifiers();
+  assert.deepEqual(actual, expected, "catalog identifiers must match source stems");
+
+  // package.json must never appear as an agent
+  assert.ok(!actual.includes("package"));
+  assert.ok(!actual.includes("package.json"));
+});
+
+test("every catalog agent validates against Cheshire schema contract", () => {
+  const report = validateCatalog();
+  if (!report.ok) {
+    const detail = report.failed
+      .map((f) => `${f.identifier}: ${f.errors.join("; ")}`)
+      .join("\n");
+    assert.fail(`schema validation failed for ${report.failed.length}/${report.total}:\n${detail}`);
+  }
+  assert.ok(report.total >= 50, `expected full catalog, got ${report.total}`);
+  assert.equal(report.passed, report.total);
+  console.log(`SCHEMA_PASS total=${report.total} passed=${report.passed}`);
+});
+
+test("content preservation: investor character (warrenbuffet)", () => {
+  const agent = JSON.parse(readFileSync(join(AGENTS_DIR, "warrenbuffet.json"), "utf8"));
+  const role = agent.config.systemRole;
+  assert.match(role, /Warren Buffett/i);
+  assert.match(role, /margin of safety/i);
+  assert.match(role, /Oracle of Omaha|circle of competence|owner earnings/i);
+  assert.ok(agent.meta.description.length > 20);
+  assert.ok(role.length > 200, "systemRole must carry real persona content");
+});
+
+test("content preservation: narrative character (cheshire or clawd)", () => {
+  const cheshireId = listCatalogIdentifiers().find((id) => id.includes("cheshire"));
+  const clawdId = "clawd";
+  assert.ok(cheshireId, "cheshire character must be in catalog");
+  const cheshire = JSON.parse(readFileSync(join(AGENTS_DIR, `${cheshireId}.json`), "utf8"));
+  assert.match(cheshire.config.systemRole, /Cheshire/i);
+  assert.match(cheshire.config.systemRole, /Oracle of the Swarm|generative|riddles/i);
+
+  const clawd = JSON.parse(readFileSync(join(AGENTS_DIR, `${clawdId}.json`), "utf8"));
+  assert.match(clawd.config.systemRole, /Clawd/i);
+  assert.match(clawd.config.systemRole, /Solana|x402|oracle/i);
+});
+
+test("content preservation: defi agent (defi-yield-farmer)", () => {
+  const agent = JSON.parse(readFileSync(join(AGENTS_DIR, "defi-yield-farmer.json"), "utf8"));
+  assert.equal(agent.identifier, "defi-yield-farmer");
+  assert.match(agent.config.systemRole, /yield farming/i);
+  assert.match(agent.config.systemRole, /Aave|Compound|Curve|Impermanent loss/i);
+  assert.match(agent.meta.description, /yield farming/i);
+});
+
+test("convertCharacterToCheshireAgent produces valid agents from source files", () => {
+  for (const stem of sourceCharacterStems()) {
+    const source = JSON.parse(readFileSync(join(CHARACTERS_DIR, `${stem}.json`), "utf8"));
+    const identifier = characterIdentifierFromStem(stem);
+    const agent = convertCharacterToCheshireAgent(source, identifier);
+    const result = validateCheshireAgent(agent);
+    assert.equal(result.ok, true, `${identifier}: ${(result.errors || []).join("; ")}`);
+    assert.equal(agent.identifier, identifier);
+    assert.ok(agent.config.systemRole.length > 50);
+  }
+});
+
+test("normalizeDefiAgent preserves systemRole from real defi sources", () => {
+  const stem = "defi-yield-farmer";
+  const source = JSON.parse(readFileSync(join(DEFI_SRC_DIR, `${stem}.json`), "utf8"));
+  const agent = normalizeDefiAgent(source, stem);
+  const result = validateCheshireAgent(agent);
+  assert.equal(result.ok, true, (result.errors || []).join("; "));
+  assert.equal(agent.config.systemRole, source.config.systemRole);
+});
+
+test("validateCheshireAgent rejects incomplete agents", () => {
+  const bad = { identifier: "x" };
+  const result = validateCheshireAgent(bad);
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => e.includes("missing required field")));
+});
+
+test("loadCatalog returns schema-valid entries with matching file stems", () => {
+  const entries = loadCatalog();
+  assert.ok(entries.length > 0);
+  for (const { identifier, agent } of entries) {
+    assert.equal(agent.identifier, identifier);
+  }
+});

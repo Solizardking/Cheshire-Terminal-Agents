@@ -1,7 +1,7 @@
 {
   "name": "cheshire-terminal-agents",
-  "version": "1.45.0",
-  "description": "Cheshire Terminal Agents — dual-chain identity forge (Robinhood Chain EVM + Solana SVM) plus production DeFi/Solana agent catalog, schema, and locales for cheshireterminal.ai/agents",
+  "version": "1.48.0",
+  "description": "Cheshire Terminal Agents — dual-chain identity forge (Robinhood Chain EVM + Solana SVM), dual-rail omni mint with LayerZero zk-omni, production agent catalog, plus optional clawdbot-go (Zero Clawd) install bridge for cheshireterminal.ai/agents and /zeroclawd",
   "type": "module",
   "sideEffects": false,
   "license": "MIT",
@@ -26,6 +26,8 @@
     "svm",
     "metaplex",
     "clawd",
+    "clawdbot-go",
+    "zero-clawd",
     "mcp",
     "layerzero",
     "zk",
@@ -37,13 +39,18 @@
     "cheshire-terminal-agents": "./src/cli.js",
     "ct-agents": "./src/cli.js",
     "robinhood-agents": "./src/cli.js",
-    "zk-omni-relayer": "./scripts/zk-omni-relayer.mjs"
+    "zk-omni-relayer": "./scripts/zk-omni-relayer.mjs",
+    "cheshire-headless": "./scripts/run-package.mjs",
+    "clawd-agent-tui": "./scripts/run-package.mjs",
+    "zk-shark-tui": "./scripts/run-package.mjs",
+    "cheshire-package": "./scripts/run-package.mjs"
   },
   "exports": {
     ".": "./src/index.js",
     "./agentCatalog": "./src/agentCatalog.js",
     "./skillPack": "./src/skillPack.js",
     "./packagesCatalog": "./src/packagesCatalog.js",
+    "./clawdbotBridge": "./src/clawdbotBridge.js",
     "./deployments": "./src/deployments.js",
     "./zkOmni": "./src/zkOmni/index.js",
     "./deployments/mainnet-4663": "./deployments/agent-registries-mainnet-4663.json",
@@ -59,13 +66,17 @@
     "agents:list": "node -e \"import('./src/agentCatalog.js').then(m=>console.log(m.listCatalogIdentifiers().join('\\n')))\"",
     "skills:list": "node -e \"import('./src/skillPack.js').then(m=>console.log(m.listRhCryptoAgentSkillIds().join('\\n')))\"",
     "skills:inspect": "node -e \"import('./src/skillPack.js').then(m=>console.log(JSON.stringify(m.inspectRhCryptoAgentPack(),null,2)))\"",
+    "skills:suite:list": "node -e \"import('./src/skillPack.js').then(m=>console.log(m.listRhSkillsSuiteIds().join('\\n')))\"",
+    "skills:suite:inspect": "node -e \"import('./src/skillPack.js').then(m=>console.log(JSON.stringify(m.inspectRhSkillsSuite(),null,2)))\"",
+    "skills:suite:sync": "node scripts/sync-suite-skills.mjs",
     "skills:sync": "node scripts/sync-rh-skill-pack.mjs",
     "packages:list": "node -e \"import('./src/packagesCatalog.js').then(m=>console.log(m.listPackageIds().join('\\n')))\"",
     "packages:inspect": "node -e \"import('./src/packagesCatalog.js').then(m=>console.log(JSON.stringify(m.inspectPackages(),null,2)))\"",
+    "packages:install": "node scripts/install-packages.mjs",
     "validate:agents": "node --test test/agents-catalog.test.js",
     "test": "node --test test/*.test.js deploy/test/*.test.cjs",
     "test:zk-omni": "node --test test/zk-omni.test.js",
-    "check": "node --check src/index.js && node --check src/deployments.js && node --check src/agentCatalog.js && node --check src/skillPack.js && node --check src/packagesCatalog.js && node --check src/cli.js && node --check src/zkOmni/codec.js && node --check src/zkOmni/relayer.js && node --check deploy/scripts/deployment-safety.cjs && npm test",
+    "check": "node --check src/index.js && node --check src/deployments.js && node --check src/agentCatalog.js && node --check src/skillPack.js && node --check src/packagesCatalog.js && node --check src/clawdbotBridge.js && node --check src/cli.js && node --check src/zkOmni/codec.js && node --check src/zkOmni/relayer.js && node --check scripts/install-packages.mjs && node --check scripts/run-package.mjs && node --check deploy/scripts/deployment-safety.cjs && npm test",
     "setup:solidity": "forge install foundry-rs/forge-std@v1.9.6 --no-git --shallow",
     "test:solidity": "forge test -vv",
     "zk-omni:plan": "node scripts/zk-omni-relayer.mjs plan",
@@ -73,6 +84,7 @@
     "zk-omni:relayer": "node scripts/zk-omni-relayer.mjs serve",
     "zk-omni:status": "node scripts/zk-omni-relayer.mjs status",
     "pack:check": "npm pack --dry-run",
+    "postinstall": "node scripts/install-packages.mjs",
     "prepublishOnly": "npm test"
   },
   "engines": {
@@ -83,6 +95,7 @@
     "registry": "https://registry.npmjs.org"
   },
   "dependencies": {
+    "@solana/web3.js": "^1.98.4",
     "viem": "^2.38.0"
   },
   "files": [
@@ -113,6 +126,8 @@
     "scripts/import-agents.mjs",
     "scripts/sync-rh-skill-pack.mjs",
     "scripts/zk-omni-relayer.mjs",
+    "scripts/install-packages.mjs",
+    "scripts/run-package.mjs",
     "contracts",
     "deploy/script",
     "deploy/scripts",
@@ -126,6 +141,7 @@
     "foundry.toml",
     "remappings.txt",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "docs"
   ]
 }

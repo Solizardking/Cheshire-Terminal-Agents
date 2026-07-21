@@ -45,12 +45,30 @@ export {
   listPackageIds,
   resolvePackageDir,
   inspectPackages,
+  readInstallMarker,
+  oneshotInstallHints,
 } from "./packagesCatalog.js";
+
+export {
+  CLAWDBOT_GO_NPM,
+  CLAWDBOT_GO_NPM_URL,
+  CLAWDBOT_GO_REGISTRY_LATEST,
+  ZERO_CLAWD_HOSTED_URL,
+  ZERO_CLAWD_DEFAULT_AGENT_BASE,
+  EXTERNAL_PACKAGE_CATALOG,
+  clawdbotGoInstallHints,
+  listExternalPackageIds,
+  getExternalPackage,
+  planClawdbotInstall,
+  runClawdbotInstall,
+} from "./clawdbotBridge.js";
 
 export {
   RH_CRYPTO_AGENT_PACK_DIR,
   RH_CRYPTO_AGENT_PACK_INDEX_PATH,
   RH_CRYPTO_AGENT_CATALOG_PATH,
+  RH_SKILLS_SUITE_DIR,
+  RH_SKILLS_SUITE_INDEX_PATH,
   loadRhCryptoAgentPackIndex,
   getRhCryptoAgentSkillsDir,
   listRhCryptoAgentSkillIds,
@@ -58,7 +76,35 @@ export {
   loadRhCryptoAgentCatalog,
   listSkillDirectoriesWithSkillMd,
   clawdbotSkillsDirExportLine,
+  loadRhSkillsSuiteIndex,
+  listRhSkillsSuiteIds,
+  inspectRhSkillsSuite,
+  clawdbotSuiteSkillsDirExportLine,
 } from "./skillPack.js";
+
+import {
+  MSG_ZK_OMNI,
+  EID_SOLANA_MAINNET,
+  EID_ROBINHOOD_MAINNET,
+  computeOmniNullifier,
+  randomSecretHex,
+  payloadCommitmentFrom,
+  encodeZkOmniMessage,
+  decodeZkOmniMessage,
+  addressToBytes32,
+  planZkOmniMessage,
+  verifyZkProof,
+  createZkProof,
+  RELAY_STATUSES,
+  ZkOmniJournal,
+  ZkOmniRelayer,
+  createRelayer,
+  buildRobinhoodSendCall,
+  deliverJob,
+  createDeliverFn,
+  planSolanaReceive,
+  ZK_OMNI_PROGRAM_ID_DEFAULT,
+} from "./zkOmni/index.js";
 
 export {
   MSG_ZK_OMNI,
@@ -71,20 +117,31 @@ export {
   decodeZkOmniMessage,
   addressToBytes32,
   planZkOmniMessage,
+  verifyZkProof,
+  createZkProof,
   RELAY_STATUSES,
   ZkOmniJournal,
   ZkOmniRelayer,
   createRelayer,
-} from "./zkOmni/index.js";
+  buildRobinhoodSendCall,
+  deliverJob,
+  createDeliverFn,
+  planSolanaReceive,
+  ZK_OMNI_PROGRAM_ID_DEFAULT,
+};
 
 /** Published npm package identity for Cheshire Terminal Agents. */
 export const PACKAGE_NAME = "cheshire-terminal-agents";
-export const PACKAGE_VERSION = "1.45.0";
+export const PACKAGE_VERSION = "1.48.0";
 export const HUB_URL = "https://cheshireterminal.ai/agents";
 export const FORGE_URL = "https://cheshireterminal.ai/agents/forge";
 export const LIVE_FEED_URL = "https://cheshireterminal.ai/agents/live";
 export const MINT_URL = "https://cheshireterminal.ai/agents/mint";
+export const ZERO_CLAWD_URL = "https://cheshireterminal.ai/zeroclawd";
 export const CATALOG_API = "https://cheshireterminal.ai/api/clawd/browser-agents";
+
+/** Dual-rail omni mint plan schema version (Solana Metaplex + RH ERC-8004 + optional zk-omni). */
+export const OMNI_MINT_PLAN_VERSION = 1;
 
 export const platforms = Object.freeze({
   robinhood: Object.freeze({
@@ -103,6 +160,18 @@ export const platforms = Object.freeze({
     /** Prefer Metaplex API mint-prepare → wallet sign → mint-confirm; treasury mint is fallback. */
     mintPath: "metaplex-api-preferred",
     fungibleTokenLaunch: "available",
+    liveFeed: true,
+  }),
+  /**
+   * Dual-rail identity: mint on Solana (Metaplex) and register on Robinhood (ERC-8004),
+   * then optionally bind them with LayerZero zk-omni msgType 4.
+   */
+  omni: Object.freeze({
+    rails: Object.freeze(["solana", "robinhood"]),
+    solana: "metaplex-core-agent-identity",
+    robinhood: "erc-8004-identity-registry",
+    link: "zk-omni-msgtype-4",
+    layerZeroEids: Object.freeze({ solana: 30168, robinhood: 30416 }),
     liveFeed: true,
   }),
 });
@@ -124,6 +193,15 @@ export const frameworkCapabilities = Object.freeze({
     agentIdentityRegistration: "atomic-with-metaplex-api-or-attempted-after-core-mint",
     fungibleAgentTokenLaunch: "available",
     clawdGateSource: "helius-das-or-solana-rpc",
+    liveFeedReport: true,
+  }),
+  omni: Object.freeze({
+    dualRailPlan: true,
+    solanaPath: "metaplex-api-preferred",
+    robinhoodPath: "local-unsigned-erc8004-register",
+    zkOmniLink: true,
+    msgType: 4,
+    neverCustodiesKeys: true,
     liveFeedReport: true,
   }),
 });
@@ -241,6 +319,395 @@ export function prepareEvmRegistration({ chainId = 46630, registry, agentURI, ..
 export function prepareCanonicalEvmRegistration({ chainId = 46630, ...input }) {
   const registry = getCanonicalContract(chainId, "identity").address;
   return prepareEvmRegistration({ ...input, chainId, registry });
+}
+
+/**
+ * URL-safe agent slug for dual-rail discovery (1–64 chars).
+ * @param {string} name
+ * @returns {string}
+ */
+export function agentSlugFromName(name) {
+  const slug = String(name ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
+  if (!slug) throw new Error("name must produce a non-empty URL-safe agent slug");
+  return slug;
+}
+
+/**
+ * Deterministic bytes32 agent id seed from slug (provisional until RH register returns tokenId).
+ * @param {string} slug
+ * @returns {`0x${string}`}
+ */
+export function provisionalOmniAgentId(slug) {
+  const digest = createHash("sha256")
+    .update(Buffer.from("cheshire-omni-agent-id:v1", "utf8"))
+    .update(Buffer.from([0]))
+    .update(Buffer.from(String(slug), "utf8"))
+    .digest("hex");
+  return `0x${digest}`;
+}
+
+/**
+ * Map Solana cluster / Metaplex API network string.
+ * @param {"mainnet-beta"|"devnet"|"solana-mainnet"|"solana-devnet"|string|undefined} network
+ */
+function resolveSolanaMetaplexNetwork(network) {
+  const n = String(network || "solana-mainnet").trim().toLowerCase();
+  if (n === "devnet" || n === "solana-devnet") return "solana-devnet";
+  if (n === "mainnet-beta" || n === "solana-mainnet" || n === "mainnet") return "solana-mainnet";
+  throw new Error("solana network must be solana-mainnet or solana-devnet");
+}
+
+/**
+ * Plan a dual-rail omni agent mint: Solana Metaplex Core+Agent Identity + Robinhood ERC-8004
+ * register, with optional LayerZero zk-omni link envelope (msgType 4).
+ *
+ * Pure / local — never signs, never submits, never asks for private keys.
+ * Callers still need wallet signatures on each rail, then planOmniIdentityLink after both ids exist.
+ *
+ * @param {object} input
+ * @param {string} input.name
+ * @param {string} input.description
+ * @param {string} input.image
+ * @param {Array} [input.services]
+ * @param {string[]} [input.supportedTrust]
+ * @param {number} [input.chainId=46630] Robinhood chain (testnet default)
+ * @param {string} [input.ownerPubkey] Solana owner (required for sponsored mint auth envelope later)
+ * @param {string} [input.uri] Core asset NFT metadata URI (Metaplex `uri` field)
+ * @param {string} [input.solanaNetwork="solana-mainnet"]
+ * @param {string} [input.agentType]
+ * @param {string} [input.personality]
+ * @param {string[]|string} [input.capabilities]
+ * @param {string} [input.symbol]
+ * @param {boolean} [input.linkOmni=true]
+ * @param {string} [input.controllerAddress] EVM controller for zk-omni
+ * @param {string} [input.secretHex] optional zk secret (generated if linkOmni and omitted)
+ * @param {"robinhood-to-solana"|"solana-to-robinhood"} [input.direction]
+ * @param {string} [input.agentSlug]
+ * @param {boolean} [input.x402Support]
+ */
+export function planOmniAgentMint(input) {
+  if (!input || typeof input !== "object") throw new Error("omni mint input is required");
+
+  const name = text(input.name, "name", 160);
+  const description = text(input.description, "description", 4_000);
+  const image = text(input.image, "image", 2_048);
+  if (!/^(https:\/\/|ipfs:\/\/|data:image\/)/i.test(image)) {
+    throw new Error("image must use https://, ipfs://, or a data:image URI");
+  }
+
+  const agentSlug = input.agentSlug
+    ? text(input.agentSlug, "agentSlug", 64).toLowerCase().replace(/[^a-z0-9-]/g, "")
+    : agentSlugFromName(name);
+  if (!agentSlug) throw new Error("agentSlug is empty after normalization");
+
+  const chainId = Number(input.chainId ?? 46630);
+  if (chainId !== 4663 && chainId !== 46630) {
+    throw new Error("chainId must be 46630 (testnet) or 4663 (mainnet)");
+  }
+  if (chainId === 4663 && input.confirmMainnet !== true) {
+    throw new Error(
+      "Robinhood mainnet (4663) requires confirmMainnet: true — prefer 46630 for experiments",
+    );
+  }
+
+  const solanaNetwork = resolveSolanaMetaplexNetwork(input.solanaNetwork);
+  const uri =
+    optionalText(input.uri, "uri", 2_048) ||
+    optionalText(input.metadataUri, "metadataUri", 2_048) ||
+    image;
+
+  const services = Array.isArray(input.services) ? input.services : [];
+  const supportedTrust = Array.isArray(input.supportedTrust)
+    ? input.supportedTrust
+    : ["reputation", "tee"];
+
+  const dualRegistrations = [
+    { agentId: agentSlug, agentRegistry: "cheshire-omni" },
+    {
+      agentId: agentSlug,
+      agentRegistry: "robinhood-erc8004",
+      chainId,
+    },
+    {
+      agentId: agentSlug,
+      agentRegistry: "metaplex-agent-identity",
+      network: solanaNetwork,
+    },
+  ];
+
+  // Cross-link hints inside ERC-8004 registration document (metadata; not on-chain ids yet).
+  const rhRegistrations = [
+    {
+      agentId: agentSlug,
+      agentRegistry: "cheshire-omni",
+    },
+    {
+      agentId: agentSlug,
+      agentRegistry: "metaplex-agent-identity",
+      network: solanaNetwork,
+    },
+  ];
+
+  // Build registration document first so calldata agentURI includes omni cross-links.
+  const rhRegistrationWithOmni = {
+    ...buildRegistration({
+      name,
+      description,
+      image,
+      services,
+      supportedTrust,
+      x402Support: input.x402Support === true,
+      active: input.active !== false,
+    }),
+    registrations: rhRegistrations,
+  };
+  const rhAgentURI = registrationDataUri(rhRegistrationWithOmni);
+
+  // --- Robinhood ERC-8004 unsigned register (calldata uses omni-linked agentURI) ---
+  const robinhoodBase = prepareCanonicalEvmRegistration({
+    chainId,
+    name,
+    description,
+    image,
+    services,
+    supportedTrust,
+    x402Support: input.x402Support === true,
+    active: input.active !== false,
+    agentURI: rhAgentURI,
+  });
+  const robinhood = {
+    ...robinhoodBase,
+    registration: rhRegistrationWithOmni,
+    agentURI: rhAgentURI,
+    data: encodeFunctionData({
+      abi: identityRegistryAbi,
+      functionName: "register",
+      args: [rhAgentURI],
+    }),
+  };
+
+  // --- Solana Metaplex API mint input (mintAndSubmitAgent / mint-prepare shape) ---
+  const agentMetadata = {
+    type: "agent",
+    name,
+    description,
+    services: services.map((item, index) => ({
+      name: text(item?.name, `services[${index}].name`, 64),
+      endpoint: text(item?.endpoint, `services[${index}].endpoint`, 2_048),
+    })),
+    registrations: dualRegistrations,
+    supportedTrust: supportedTrust.map((t, i) => text(String(t), `supportedTrust[${i}]`, 64)),
+  };
+
+  const ownerPubkey = String(
+    input.ownerPubkey || input.ownerAddress || input.owner || "",
+  ).trim();
+
+  const metaplexMintInput = Object.freeze({
+    wallet: ownerPubkey || undefined,
+    name: name.slice(0, 32),
+    uri,
+    network: solanaNetwork,
+    agentMetadata: Object.freeze(agentMetadata),
+  });
+
+  let sponsoredMintIntent = null;
+  let sponsoredMintReady = false;
+  if (ownerPubkey) {
+    try {
+      sponsoredMintIntent = normalizeSponsoredMintIntent({
+        ownerPubkey,
+        name,
+        symbol: input.symbol,
+        description,
+        agentType: input.agentType || "omni",
+        personality: input.personality || "cheshire",
+        capabilities: input.capabilities || ["omni", "mcp", "a2a"],
+        imageUri: image,
+        registrationUri: registrationDataUri(rhRegistrationWithOmni),
+      });
+      sponsoredMintReady = Boolean(sponsoredMintIntent.owner);
+    } catch {
+      sponsoredMintIntent = null;
+      sponsoredMintReady = false;
+    }
+  }
+
+  // --- Optional provisional zk-omni plan (replace agentId after RH mint) ---
+  const linkOmni = input.linkOmni !== false;
+  let omniLink = null;
+  if (linkOmni) {
+    const provisionalId = provisionalOmniAgentId(agentSlug);
+    omniLink = planZkOmniMessage({
+      direction: input.direction || "robinhood-to-solana",
+      action: "dual_identity_link",
+      memo: `omni:${agentSlug}:pending`.slice(0, 200),
+      agentId: input.agentId || provisionalId,
+      controllerAddress: input.controllerAddress,
+      secretHex: input.secretHex,
+      modelHash: input.modelHash,
+      ttlSeconds: input.ttlSeconds ?? 7_200,
+      context: input.context || `cheshire-omni-mint:${agentSlug}`,
+    });
+    // Do not leak secretHex in the plan object — planZkOmniMessage returns secret only if present
+    // in its return; strip if the codec includes it.
+    if (omniLink && typeof omniLink === "object" && "secretHex" in omniLink) {
+      const { secretHex: _omit, ...rest } = omniLink;
+      omniLink = { ...rest, secretRetainedLocally: Boolean(input.secretHex) };
+    }
+  }
+
+  return Object.freeze({
+    kind: "omni-agent-mint",
+    version: OMNI_MINT_PLAN_VERSION,
+    rails: Object.freeze(["solana", "robinhood"]),
+    agent: Object.freeze({
+      name,
+      description,
+      image,
+      agentSlug,
+      provisionalAgentId: provisionalOmniAgentId(agentSlug),
+    }),
+    surfaces: Object.freeze({
+      hub: HUB_URL,
+      forge: FORGE_URL,
+      mint: MINT_URL,
+      live: LIVE_FEED_URL,
+    }),
+    robinhood: Object.freeze({
+      ...robinhood,
+      steps: Object.freeze([
+        "Review chainId, registry address, and calldata (register(agentURI))",
+        "Connect EVM wallet on Robinhood Chain",
+        "Submit unsigned tx { to, data, value } — owner becomes ERC-721 holder",
+        "Read Registered event + ownerOf / agentURI / getAgentWallet",
+      ]),
+    }),
+    solana: Object.freeze({
+      mintPath: "metaplex-api-preferred",
+      network: solanaNetwork,
+      metaplexMintInput,
+      sponsoredMintIntent,
+      sponsoredMintReady,
+      ownerPubkey: ownerPubkey || null,
+      steps: Object.freeze([
+        "Prefer mintSolanaPrepare → owner wallet signs Metaplex API tx → mintSolanaConfirm",
+        "Fallback: CLAWD_AGENT_MINT_V2 authorization + mintSolana (treasury-sponsored)",
+        "Verify Core asset + AgentIdentity plugin (transfer/update/execute hooks)",
+        "Report to /agents/live via mint-confirm or reportLive",
+      ]),
+      note:
+        "Metaplex API stores agentMetadata off-chain and returns an unsigned tx that creates the Core asset + Agent Identity PDA atomically. Private keys never leave the wallet.",
+    }),
+    omniLink: omniLink
+      ? Object.freeze({
+          status: "provisional",
+          note:
+            "Provisional nullifier plan for dual_identity_link. After both rails confirm, call planOmniIdentityLink with real solanaAsset + rhAgentId.",
+          plan: omniLink,
+        })
+      : null,
+    crossRegistration: Object.freeze({
+      solanaAgentMetadataRegistrations: dualRegistrations,
+      rhRegistrations,
+    }),
+    executionOrder: Object.freeze([
+      "1. Review this plan — no private keys; both rails are wallet-signed writes",
+      "2. Solana: mintSolanaPrepare (or local mintAndSubmitAgent) → sign → confirm; keep assetAddress",
+      "3. Robinhood: broadcast prepareCanonicalEvmRegistration calldata; keep agentId from Registered",
+      "4. planOmniIdentityLink({ solanaAsset, rhAgentId, controllerAddress }) → sendZkOmni / relayer",
+      "5. reportLive on both rails with chain metadata linking the pair",
+    ]),
+    safety: Object.freeze({
+      neverCustodiesKeys: true,
+      mainnetConfirmed: chainId !== 4663 || input.confirmMainnet === true,
+      identityIsNotFungibleToken: true,
+      linkRequiresBothConfirmed: true,
+    }),
+  });
+}
+
+/**
+ * After both rails are confirmed, plan a zk-omni dual_identity_link message
+ * that binds Solana asset address ↔ Robinhood agent id.
+ *
+ * @param {object} input
+ * @param {string} input.solanaAsset Metaplex Core asset address (base58)
+ * @param {string|number|bigint} input.rhAgentId ERC-8004 agent token id
+ * @param {number} [input.chainId=4663]
+ * @param {string} [input.controllerAddress] EVM controller (0x…)
+ * @param {string} [input.agentSlug]
+ * @param {string} [input.secretHex]
+ * @param {"robinhood-to-solana"|"solana-to-robinhood"} [input.direction]
+ */
+export function planOmniIdentityLink(input) {
+  if (!input || typeof input !== "object") throw new Error("omni identity link input is required");
+  const solanaAsset = text(input.solanaAsset || input.assetAddress, "solanaAsset", 64);
+  const rhAgentIdRaw = input.rhAgentId ?? input.agentId;
+  if (rhAgentIdRaw === undefined || rhAgentIdRaw === null || rhAgentIdRaw === "") {
+    throw new Error("rhAgentId is required");
+  }
+
+  const chainId = Number(input.chainId ?? 4663);
+  const memo = `omni:rh:${chainId}:${String(rhAgentIdRaw)}|sol:${solanaAsset}`.slice(0, 200);
+
+  // Prefer explicit bytes32; else hash rhAgentId string for agentId field.
+  let agentIdHex = input.agentIdHex;
+  if (!agentIdHex) {
+    const asNum = typeof rhAgentIdRaw === "bigint" ? rhAgentIdRaw : BigInt(String(rhAgentIdRaw));
+    if (asNum >= 0n && asNum < 1n << 256n) {
+      agentIdHex = `0x${asNum.toString(16).padStart(64, "0")}`;
+    } else {
+      agentIdHex = provisionalOmniAgentId(String(rhAgentIdRaw));
+    }
+  }
+
+  const payloadCommitment = payloadCommitmentFrom([
+    "dual_identity_link",
+    String(chainId),
+    String(rhAgentIdRaw),
+    solanaAsset,
+    input.agentSlug || "",
+  ]);
+
+  const plan = planZkOmniMessage({
+    direction: input.direction || "robinhood-to-solana",
+    action: "dual_identity_link",
+    memo,
+    agentId: agentIdHex,
+    controllerAddress: input.controllerAddress,
+    secretHex: input.secretHex,
+    payloadCommitment,
+    modelHash: input.modelHash,
+    ttlSeconds: input.ttlSeconds ?? 3_600,
+    context: input.context || `cheshire-omni-link:${solanaAsset}:${rhAgentIdRaw}`,
+  });
+
+  let safePlan = plan;
+  if (plan && typeof plan === "object" && "secretHex" in plan) {
+    const { secretHex: _omit, ...rest } = plan;
+    safePlan = { ...rest, secretRetainedLocally: Boolean(input.secretHex) };
+  }
+
+  return Object.freeze({
+    kind: "omni-identity-link",
+    version: OMNI_MINT_PLAN_VERSION,
+    solanaAsset,
+    rhAgentId: String(rhAgentIdRaw),
+    chainId,
+    payloadCommitment,
+    plan: safePlan,
+    next: Object.freeze([
+      "Deliver via zk-omni-relayer oneshot or buildRobinhoodSendCall + wallet send",
+      "On Solana, receive_zk_omni consumes the nullifier PDA",
+      "reportLive with metadata.omniPair = { solanaAsset, rhAgentId, nullifier }",
+    ]),
+  });
 }
 
 function normalizeSponsoredMintName(value) {
@@ -594,14 +1061,21 @@ export function createAgentForge(options) {
     reportLive: client.reportLive,
     clawdGate: client.clawdGate,
     liveFeed: client.liveFeed,
+    /** Dual-rail plan: Solana Metaplex + RH ERC-8004 + optional zk-omni (local, unsigned). */
+    planOmniMint: planOmniAgentMint,
+    /** Post-confirm zk-omni dual_identity_link plan. */
+    planOmniIdentityLink,
     prepare: ({ platform, ...input }) => {
       if (platform === "robinhood") return client.prepareRobinhood(input);
+      if (platform === "omni") {
+        return Promise.resolve(planOmniAgentMint(input));
+      }
       if (platform === "solana") {
         return Promise.reject(new Error(
           "Solana minting is a live write; call mintSolanaPrepare (Metaplex API) or mintSolana (treasury fallback) with a fresh CLAWD_AGENT_MINT_V2 authorization",
         ));
       }
-      return Promise.reject(new Error("platform must be robinhood or solana"));
+      return Promise.reject(new Error("platform must be robinhood, solana, or omni"));
     },
     inspect: ({ platform, id, chainId }) => {
       if (platform === "robinhood") return client.getRobinhood(id, chainId);

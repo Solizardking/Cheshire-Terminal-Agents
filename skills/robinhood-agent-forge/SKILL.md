@@ -7,11 +7,12 @@ description: Prepare, register, inspect, and safely operate chain-scoped AI agen
 
 Open `https://cheshireterminal.ai/agents/forge` for the canonical interactive flow. Ask the user to choose `Robinhood Chain` or `Solana` before preparing any write. Treat the result as one chain-scoped identity; never imply that a single token exists on both chains.
 
-## Choose one rail
+## Choose rails
 
-- Choose Robinhood Chain for an ERC-721 identity in the deployed ERC-8004-compatible identity, reputation, and validation suite. Prefer testnet chain `46630`. Require an explicit mainnet confirmation for chain `4663` immediately before wallet submission.
-- Choose Solana for a Metaplex Core asset with Agent Identity. Prefer `POST /api/metaplex-agents/mint-prepare` (Metaplex API → user-signed tx) then `mint-confirm` (live feed). Treasury-sponsored `POST /api/metaplex-agents/mint` is the fallback. Use only the cluster returned by the current health response. Treat `mainnet-beta` as a live mainnet write and require explicit confirmation.
-- Create a separate identity if the user later chooses the other chain. Link identities only through metadata after verifying control of both.
+- Choose **Robinhood Chain** for an ERC-721 identity in the deployed ERC-8004-compatible identity, reputation, and validation suite. Prefer testnet chain `46630`. Require an explicit mainnet confirmation for chain `4663` immediately before wallet submission.
+- Choose **Solana** for a Metaplex Core asset with Agent Identity. Prefer `POST /api/metaplex-agents/mint-prepare` (Metaplex API → user-signed tx) then `mint-confirm` (live feed). Treasury-sponsored `POST /api/metaplex-agents/mint` is the fallback. Use only the cluster returned by the current health response. Treat `mainnet-beta` as a live mainnet write and require explicit confirmation.
+- Choose **omni (both rails)** when the user wants Solana **and** Robinhood as one logical agent, optionally bound with LayerZero zk-omni (`dual_identity_link`). Use `planOmniAgentMint` / CLI `omni-mint-plan` (skill `cheshire-omni-mint`, docs `docs/OMNI_MINT.md`). Still two wallet-signed writes — never claim a single cross-chain NFT.
+- Create a separate identity if the user later chooses the other single rail alone. After dual mint, link with `planOmniIdentityLink` only after verifying control of both.
 
 Read [references/api.md](references/api.md) before calling Cheshire APIs, [references/sdk.md](references/sdk.md) before using the package, and [references/deployment.md](references/deployment.md) before trusting or deploying contracts.
 

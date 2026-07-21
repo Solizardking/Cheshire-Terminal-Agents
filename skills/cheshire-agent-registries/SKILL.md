@@ -68,6 +68,7 @@ cheshire-terminal/robinhood-agents/contracts/
 | `cheshire-agent-identity-registry` | Mint/register agent NFT, agentWallet, metadata, isAuthorized |
 | `cheshire-agent-reputation-registry` | Client feedback, revoke, summaries |
 | `cheshire-agent-validation-registry` | Validation request/response lifecycle |
+| `cheshire-omni-mint` | Dual-rail Solana Metaplex + RH ERC-8004 + optional zk-omni link |
 | `cheshire-zk-omni` / `zk-omni-messaging` | RH ↔ Solana nullifier messages |
 | `robinhood-agent-forge` | End-to-end forge UX + API |
 | `rh-launchpad-v3` / `rh-bonded-launch` | Token launches on FunPump (not identity) |

@@ -2,10 +2,10 @@
 name: rh-bonded-launch
 description: >
   Launch a permissionless bonding-curve token on Robinhood Chain (4663) via the live
-  BondingCurveLaunchpad, or guide a user/agent to do so on ClawdCode /launch or Cheshire
+  BondingCurveLaunchpad, or guide a user/agent to do so on FunPump /launch or Cheshire
   /rh-launch. Use when the user says "launch a token", "create token on Robinhood",
   "bonded launch", "createToken", "fair launch on RH", "pump style on robinhood",
-  "open a curve", or brings an agent to clawdcode.net to launch. Does NOT mint wCLAWD
+  "open a curve", or brings an agent to funpump.ai to launch. Does NOT mint wCLAWD
   or bridge Solana $CLAWD — that is a separate bridge skill path.
 ---
 
@@ -23,16 +23,16 @@ It is **not** Solana `$CLAWD` and **not** wCLAWD. Pegged convert = bridge only.
 
 | Item | Value |
 |------|--------|
-| **Active factory (V2 graduate)** | `0x52603DC052beD1d45FA50493737C73d1e21D59C4` (99.5% creator share); still re-read `cfg()` before signing |
-| **LaunchpadV3 (curve → Uniswap V3)** | Prefer **`rh-launchpad-v3`** skill · factory `0x565dcaAA…4a4B` · API `/api/launchpad/v3` |
+| **Active factory (Cheshire / FunPump V2 graduate)** | `0x6344a4c108b8fe03e9d79523ab0ac588a45cd092` (99.5% creator share); re-read `cfg()` before signing |
+| **LaunchpadV3 (curve → Uniswap V3)** | Prefer **`rh-launchpad-v3`** skill · factory `0x27f27F998fdBa2a38C136Bb3E7a8BA43155798Cd` · API `https://funpump.ai/api/launchpad/v3` |
 | **Legacy factory (read/claim only)** | `0x3f60A0F1E9adDc81A45a2726a3D3c7EEEdB2C322` — 50% creator share; do not create |
 | **Chain ID** | `4663` (mainnet only for this factory) |
 | **Public RPC** | `https://rpc.mainnet.chain.robinhood.com` |
 | **Explorer** | `https://robinhoodchain.blockscout.com/address/{activeFactory}` |
-| **Human UI (ClawdCode)** | `https://clawdcode.net/launch` (public) |
-| **Trade UI** | `https://clawdcode.net/launch/{tokenAddress}` |
-| **List API** | `GET https://clawdcode.net/api/launchpad/tokens?limit=30` |
-| **Token API** | `GET https://clawdcode.net/api/launchpad/token?address=0x…` |
+| **Human UI (FunPump)** | `https://funpump.ai/launch` (public) |
+| **Trade UI** | `https://funpump.ai/launch/{tokenAddress}` |
+| **List API** | `GET https://funpump.ai/api/launchpad/tokens?limit=30` |
+| **Token API** | `GET https://funpump.ai/api/launchpad/token?address=0x…` |
 | **Interface (repo)** | `funpump/contracts/src/interfaces/ILaunchpad.sol` |
 | **TS ABI (repo)** | `src/lib/evm/launchpad-abi.ts` |
 
@@ -43,7 +43,7 @@ Cheshire Terminal (if integrated): `/rh-launch`, `GET /api/rh-launchpad/tokens`,
 
 | Goal | Action |
 |------|--------|
-| User wants to click-launch in browser | Send them to **https://clawdcode.net/launch** (or Cheshire `/rh-launch`) |
+| User wants to click-launch in browser | Send them to **https://funpump.ai/launch** (or Cheshire `/rh-launch`) |
 | Agent has a funded EVM key + RPC | Build and send `createToken` tx (below) |
 | User wants pegged CLAWD on RH | **Stop** — use bridge / wCLAWD, not this skill |
 | User asks “can anyone launch?” | **Yes** — state that clearly |
@@ -51,7 +51,7 @@ Cheshire Terminal (if integrated): `/rh-launch`, `GET /api/rh-launchpad/tokens`,
 ## Agent workflow (browser / human-in-the-loop)
 
 1. Confirm they understand: **new token, not $CLAWD peg**.
-2. Open or deep-link: `https://clawdcode.net/launch`.
+2. Open or deep-link: `https://funpump.ai/launch`.
 3. Instruct: connect EVM wallet → switch to Robinhood Chain (4663) → name + symbol → optional ETH dev-buy → confirm tx.
 4. After success, open `/launch/{token}` to buy/sell on the curve.
 5. Optionally verify on Blockscout via factory `TokenCreated` logs.
@@ -130,7 +130,7 @@ const LAUNCHPAD_ABI = [
  * Prefer user wallet signature over agent-held keys.
  */
 export async function launchBondedToken(opts: {
-  launchpad: `0x${string}`; // resolve from the ClawdCode API and verify cfg()
+  launchpad: `0x${string}`; // resolve from the FunPump API (https://funpump.ai) and verify cfg()
   privateKey?: `0x${string}`; // only if user explicitly authorized agent custody
   name: string;
   symbol: string;
@@ -188,7 +188,7 @@ export async function launchBondedToken(opts: {
     txHash: hash,
     token: created?.args.token ?? null,
     tradeUrl: created?.args.token
-      ? `https://clawdcode.net/launch/${created.args.token}`
+      ? `https://funpump.ai/launch/${created.args.token}`
       : null,
     explorerTx: `https://robinhoodchain.blockscout.com/tx/${hash}`,
   };
@@ -201,7 +201,7 @@ export async function launchBondedToken(opts: {
 cd funpump/contracts   # ClawdBrowser repo
 export RH_RPC_URL=https://rpc.mainnet.chain.robinhood.com
 export PRIVATE_KEY=0x…   # funded on 4663; never commit
-export LAUNCHPAD_ADDRESS=0x52603DC052beD1d45FA50493737C73d1e21D59C4
+export LAUNCHPAD_ADDRESS=0x6344a4c108b8fe03e9d79523ab0ac588a45cd092
 export EXPECTED_LAUNCHPAD_CODEHASH=0x287ef3d4643d5d48927923b5ca0e83129563556a934db48197179ad101754592
 TOKEN_NAME="MyToken" TOKEN_SYMBOL="MTK" \
 DEV_BUY_WEI=$(cast to-wei 0.01 ether) SLIPPAGE_BPS=200 \
@@ -214,13 +214,13 @@ forge script script/LaunchViaLaunchpad.s.sol --rpc-url $RH_RPC_URL --broadcast
 - `sell(token, tokenAmount, minEthOut)` (approve launchpad first)  
 - Quotes: `getBuyQuote` / `getSellQuote`  
 - Progress: `realEthRaised(token)` vs `cfg().gradEthTarget` (~2.864 ETH)  
-- UI: `https://clawdcode.net/launch/{token}`
+- UI: `https://funpump.ai/launch/{token}`
 
 ## Discovery (no auth)
 
 ```bash
-curl -s 'https://clawdcode.net/api/launchpad/tokens?limit=10' | jq '.total, .tokens[0]'
-curl -s 'https://clawdcode.net/api/launchpad/token?address=0xTOKEN' | jq .
+curl -s 'https://funpump.ai/api/launchpad/tokens?limit=10' | jq '.total, .tokens[0]'
+curl -s 'https://funpump.ai/api/launchpad/token?address=0xTOKEN' | jq .
 cast call "$LAUNCHPAD_ADDRESS" "tokenCount()(uint256)" \
   --rpc-url https://rpc.mainnet.chain.robinhood.com
 ```

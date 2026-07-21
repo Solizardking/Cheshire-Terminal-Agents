@@ -1,10 +1,12 @@
 /**
- * Robinhood crypto-agent skill pack discovery (vendored from go-bot/skills).
+ * Robinhood / Cheshire skill pack discovery.
  *
- * Operators running clawdbot can point at the pack root:
- *   export CLAWDBOT_SKILLS_DIR="$(npm root)/cheshire-terminal-agents/skills/rh-crypto-agent"
- *   # or from a git checkout:
- *   export CLAWDBOT_SKILLS_DIR="$(pwd)/skills/rh-crypto-agent"
+ * Suite (top-level): robinhood-agents/skills/* — registries, forge, launch, zk-omni.
+ * Nested pack: robinhood-agents/skills/rh-crypto-agent (vendored from go-bot).
+ *
+ * Operators running clawdbot can point at either:
+ *   export CLAWDBOT_SKILLS_DIR="$(pwd)/robinhood-agents/skills"
+ *   export CLAWDBOT_SKILLS_DIR="$(pwd)/robinhood-agents/skills/rh-crypto-agent"
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -12,6 +14,11 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const PACKAGE_ROOT = join(__dirname, "..");
+
+/** Absolute path to the full skill suite (registry + forge + launch + packs). */
+export const RH_SKILLS_SUITE_DIR = join(PACKAGE_ROOT, "skills");
+
+export const RH_SKILLS_SUITE_INDEX_PATH = join(RH_SKILLS_SUITE_DIR, "suite-index.json");
 
 /** Absolute path to the vendored RH open skill pack (pack-index + skill dirs). */
 export const RH_CRYPTO_AGENT_PACK_DIR = join(
@@ -141,4 +148,78 @@ export function listSkillDirectoriesWithSkillMd(root = RH_CRYPTO_AGENT_PACK_DIR)
  */
 export function clawdbotSkillsDirExportLine() {
   return `export CLAWDBOT_SKILLS_DIR="${RH_CRYPTO_AGENT_PACK_DIR}"`;
+}
+
+/**
+ * Load suite-index.json for top-level robinhood-agents skills.
+ */
+export function loadRhSkillsSuiteIndex() {
+  if (!existsSync(RH_SKILLS_SUITE_INDEX_PATH)) {
+    throw new Error(`suite-index missing at ${RH_SKILLS_SUITE_INDEX_PATH}`);
+  }
+  const pack = JSON.parse(readFileSync(RH_SKILLS_SUITE_INDEX_PATH, "utf8"));
+  if (!Array.isArray(pack.skills)) {
+    throw new Error("suite-index.json skills must be an array");
+  }
+  return pack;
+}
+
+/**
+ * Ordered skill ids from the Cheshire Robinhood suite index.
+ */
+export function listRhSkillsSuiteIds() {
+  return [...loadRhSkillsSuiteIndex().skills];
+}
+
+/**
+ * Validate every suite skill entry:
+ * - Directory exists under robinhood-agents/skills
+ * - SKILL.md present, OR (rh-crypto-agent) pack-index + nested skills OK
+ */
+export function inspectRhSkillsSuite() {
+  const suite = loadRhSkillsSuiteIndex();
+  const skills = [];
+  const missing = [];
+
+  for (const id of suite.skills) {
+    const skillDir = join(RH_SKILLS_SUITE_DIR, id);
+    const skillMd = join(skillDir, "SKILL.md");
+    const okDir = existsSync(skillDir) && statSync(skillDir).isDirectory();
+
+    if (id === "rh-crypto-agent") {
+      const packReport = inspectRhCryptoAgentPack();
+      skills.push({
+        id,
+        path: skillDir,
+        skillMd: false,
+        kind: "pack",
+        packOk: packReport.ok,
+        packSkillCount: packReport.skillCount,
+      });
+      if (!okDir || !packReport.ok) missing.push(id);
+      continue;
+    }
+
+    const okMd = existsSync(skillMd);
+    skills.push({ id, path: skillDir, skillMd: okMd, kind: "skill" });
+    if (!okDir || !okMd) missing.push(id);
+  }
+
+  if (suite.skillCount != null && suite.skillCount !== suite.skills.length) {
+    missing.push(`skillCount mismatch (${suite.skillCount} vs ${suite.skills.length})`);
+  }
+
+  return {
+    ok: missing.length === 0,
+    suiteId: suite.id,
+    skillCount: suite.skills.length,
+    skills,
+    missing,
+    product: suite.product || null,
+  };
+}
+
+/** CLAWDBOT export pointing at the full suite (includes nested packs). */
+export function clawdbotSuiteSkillsDirExportLine() {
+  return `export CLAWDBOT_SKILLS_DIR="${RH_SKILLS_SUITE_DIR}"`;
 }

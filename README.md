@@ -6,14 +6,16 @@
 
 <p align="center">
   <strong>Catalog + forge. One package for agent prompts and on-chain identity.</strong><br/>
-  Ship Cheshire-schema agents, then register them on <em>either</em> Robinhood Chain (EVM / ERC-8004)
-  or Solana (SVM / Metaplex Core) through the Cheshire Terminal hub.
+  Ship Cheshire-schema agents, then register them on Robinhood Chain (EVM / ERC-8004),
+  Solana (SVM / Metaplex Core), or <em>both rails</em> with optional LayerZero zk-omni link
+  through the Cheshire Terminal hub.
 </p>
 
 <p align="center">
   <a href="https://cheshireterminal.ai/agents"><img src="https://img.shields.io/badge/OPEN_AGENT_HUB-75f58b?style=for-the-badge&labelColor=07140d" alt="Open Agent Hub"></a>
   <a href="https://cheshireterminal.ai/agents/forge"><img src="https://img.shields.io/badge/OPEN_AGENT_FORGE-c084fc?style=for-the-badge&labelColor=12081f" alt="Open Agent Forge"></a>
   <a href="https://www.npmjs.com/package/cheshire-terminal-agents"><img src="https://img.shields.io/badge/npm-cheshire--terminal--agents-ff8ad8?style=for-the-badge&labelColor=1b0b18" alt="npm package"></a>
+  <a href="https://www.npmjs.com/package/clawdbot-go"><img src="https://img.shields.io/badge/npm-clawdbot--go-CB3837?style=for-the-badge&labelColor=1b0b18&logo=npm&logoColor=white" alt="clawdbot-go npm package"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/LICENSE-MIT-9f8cff?style=for-the-badge&labelColor=100b1d" alt="MIT license"></a>
 </p>
 
@@ -46,8 +48,10 @@ Hosted surfaces: [agent hub](https://cheshireterminal.ai/agents) · [agent forge
 | **Solana** | Metaplex API mint (Core + Agent Identity) preferred; treasury-sponsored fallback; live feed | Wallet-signed Genesis/DBC agent-token launch available (distinct from identity) |
 | **Agent skill (forge)** | Portable forge `SKILL.md` + references under `skills/robinhood-agent-forge/` | Instruction content — pin like code |
 | **RH crypto-agent pack** | 16 open skills vendored from go-bot (`skills/rh-crypto-agent/`: launch, swap, LP, DCA, copy-trade, viem, …) | Skills only — not the Go clawdbot binary or runtime |
+| **Zero Clawd bridge** | CLI `clawdbot-info` / `clawdbot-install` → published [`clawdbot-go`](https://www.npmjs.com/package/clawdbot-go); catalog external entry; hosted [zeroclawd](https://cheshireterminal.ai/zeroclawd) | **Not** a hard dependency — optional `npx` invoke only |
+| **ZK Omnichain** | msgType-4 RH↔Solana messenger, Solana receiver, Ed25519 PoK, relayer CLI, `src/zkOmni/` SDK | Live LZ send needs RPC + keys; default oneshot may simulate |
 | **First-class packages** | `packages/clawd-agent-tui`, `packages/headless-agent`, `packages/layerzero-omnichain`, `packages/solana-agent-trust` — mirrored at monorepo `packages/*` | Source only (no `node_modules` / `target`); chain toolchains optional |
-| **Quality gates** | Node tests (SDK, release, catalog, skill pack, packages catalog), Foundry tests, pack checks | Tests are not a formal security audit |
+| **Quality gates** | Node tests (SDK, release, catalog, skill pack, packages catalog, **zk-omni**), Foundry tests, Solana `cargo test`, pack checks | Tests are not a formal security audit |
 
 ```mermaid
 flowchart TB
@@ -57,21 +61,144 @@ flowchart TB
     A --> L[locales]
   end
   subgraph forge [Identity forge]
-    M[Agent metadata] --> C{Choose one chain}
+    M[Agent metadata] --> C{Choose rails}
     C -->|Robinhood| E[EVM ERC-8004]
     C -->|Solana| Svm[SVM Metaplex Core]
+    C -->|Omni both| O[planOmniAgentMint]
     E --> EI[Unsigned register]
-    Svm --> SI[Signed sponsored mint]
+    Svm --> SI[Metaplex API mint]
+    O --> EI
+    O --> SI
+    O --> Z[zk-omni dual_identity_link]
   end
   A --> M
   catalog --> HUB[cheshireterminal.ai/agents]
   forge --> HUB
 ```
 
+### Dual-rail omni mint (Solana + Robinhood + LayerZero)
+
+```bash
+npx cheshire-terminal-agents omni-mint-plan --file agent.json --chain 46630 \
+  --solana-network solana-devnet
+npx cheshire-terminal-agents omni-link-plan --solana-asset <base58> --rh-agent-id 42
+```
+
+```js
+import { planOmniAgentMint, planOmniIdentityLink } from "cheshire-terminal-agents";
+
+const plan = planOmniAgentMint({
+  name: "Omni Scout",
+  description: "Dual-rail agent",
+  image: "ipfs://bafy…",
+  ownerPubkey: "<solana>",
+  chainId: 46630,
+  solanaNetwork: "solana-devnet",
+});
+// plan.solana.metaplexMintInput → mintAndSubmitAgent / mintSolanaPrepare
+// plan.robinhood.{ to, data } → wallet register()
+// after both confirms → planOmniIdentityLink({ solanaAsset, rhAgentId })
+```
+
+Full guide: [docs/OMNI_MINT.md](./docs/OMNI_MINT.md) · skill `cheshire-omni-mint`.
+
 ## Install
 
 ```bash
+# One-shot: installs the package + nested package runtime deps (postinstall)
 npm install cheshire-terminal-agents
+
+# Nested package CLIs (after install)
+npx cheshire-headless --help
+npx clawd-agent-tui --oneshot help
+
+# Re-run nested installs / inspect
+npx cheshire-terminal-agents packages-install
+npx cheshire-terminal-agents packages-list
+npx cheshire-terminal-agents packages-inspect
+
+# Skip nested install (sources only): CHESHIRE_SKIP_PACKAGE_INSTALL=1 npm install cheshire-terminal-agents
+```
+
+### Zero Clawd runtime (`clawdbot-go`) — optional companion
+
+This package is **catalog + forge + nested TS packages**. The local agent runtime
+and full RH skill oneshot ship separately as
+**[`clawdbot-go` on npm](https://www.npmjs.com/package/clawdbot-go)** (not a hard
+dependency — install only when you want the Zero Clawd console).
+
+Source tree: Zero Clawd / go-bot (`ClawdBrowser/go-bot`, repo
+[Zero-Bruh](https://github.com/Solizardking/Zero-Bruh)) · hosted connect:
+[cheshireterminal.ai/zeroclawd](https://cheshireterminal.ai/zeroclawd).
+
+#### What shipped (bridge in this package, v1.48+)
+
+| Piece | Role |
+|-------|------|
+| `src/clawdbotBridge.js` | External catalog entry, install hints, `planClawdbotInstall` / `runClawdbotInstall` |
+| CLI `clawdbot-info` | Prints npm page, install commands, hosted `/zeroclawd` connect hints |
+| CLI `clawdbot-install` | Optional invoke of `npx clawdbot-go …` (oneshot / skills / global / local) |
+| `packages-list` / `packages-inspect` | `external: ["clawdbot-go"]` + full external catalog + oneshot hints |
+| SDK exports | `clawdbotGoInstallHints`, `EXTERNAL_PACKAGE_CATALOG`, `planClawdbotInstall`, … via package root / `clawdbotBridge` |
+
+**Deliberately not included:** hard `dependencies: { "clawdbot-go" }`, optional
+dep auto-pull, or postinstall that runs Zero Clawd oneshot by default.
+
+#### Install clawdbot-go
+
+```bash
+# Direct install (recommended)
+npm i clawdbot-go
+# Global CLI bins: clawdbot-go · zero-clawd · clawdbot-stack
+npm i -g clawdbot-go
+# If npm blocks install scripts (skills will not prepackage until allowed):
+npm install -g --allow-scripts=clawdbot-go clawdbot-go
+
+# Full stack oneshot / skills-only
+npx clawdbot-go install
+npx clawdbot-go skills-install --force
+```
+
+#### Bridge CLI (from this package)
+
+```bash
+npx cheshire-terminal-agents clawdbot-info
+npx cheshire-terminal-agents clawdbot-install --dry-run
+npx cheshire-terminal-agents clawdbot-install              # → npx clawdbot-go install
+npx cheshire-terminal-agents clawdbot-install --skills-only
+npx cheshire-terminal-agents clawdbot-install --global     # → npm i -g clawdbot-go
+npx cheshire-terminal-agents clawdbot-install --local      # → npm i clawdbot-go
+
+# Discoverability (external catalog, not vendored under packages/)
+npx cheshire-terminal-agents packages-list
+npx cheshire-terminal-agents packages-inspect
+```
+
+#### Connect from hosted Zero Clawd hub
+
+```bash
+export CLAWDBOT_CORS_ORIGINS=https://cheshireterminal.ai
+# start agent web console (default :18800), then open:
+# https://cheshireterminal.ai/zeroclawd
+# aliases: /clawdbot-go · /clawdbot
+```
+
+| Package | npm | Hosted |
+|---------|-----|--------|
+| Agents / forge | [cheshire-terminal-agents](https://www.npmjs.com/package/cheshire-terminal-agents) | [agents](https://cheshireterminal.ai/agents) · [forge](https://cheshireterminal.ai/agents/forge) |
+| Zero Clawd runtime | [clawdbot-go](https://www.npmjs.com/package/clawdbot-go) | [zeroclawd](https://cheshireterminal.ai/zeroclawd) |
+
+```js
+import {
+  clawdbotGoInstallHints,
+  EXTERNAL_PACKAGE_CATALOG,
+  planClawdbotInstall,
+} from "cheshire-terminal-agents";
+// or: "cheshire-terminal-agents/clawdbotBridge"
+
+console.log(clawdbotGoInstallHints().npmUrl);
+// → https://www.npmjs.com/package/clawdbot-go
+console.log(planClawdbotInstall({ mode: "oneshot", dryRun: true }));
 ```
 
 ### Robinhood crypto-agent skill pack (from go-bot)
@@ -142,35 +269,109 @@ npx cheshire-terminal-agents agents-validate
 npx cheshire-terminal-agents capabilities --site https://cheshireterminal.ai
 npx cheshire-terminal-agents deployments --chain 4663
 npx cheshire-terminal-agents prepare-local-robinhood --file examples/robinhood-agent.json
+npx cheshire-terminal-agents zk-omni-plan --action attest --memo demo
+npx cheshire-terminal-agents zk-omni-oneshot --action publish_attestation
 ```
 
 Requires **Node.js `>=18.18`**, ESM-only.
 
 ## ZK Omnichain messaging (Robinhood ↔ Solana)
 
-Nullifier-bound LayerZero messages (msgType **4**) plus a deployable relayer:
+Nullifier-bound **LayerZero msgType 4** messages with **Ed25519 proof of knowledge**, a deployable **relayer**, Solana **receiver program**, and first-class **Zero Clawd** / **agent TUI** one-shots.
+
+Full guide: **[docs/ZK_OMNI.md](./docs/ZK_OMNI.md)** · skill `zk-omni-messaging` / go-bot `cheshire-zk-omni`.
+
+### What we built
+
+| Layer | What shipped |
+|-------|----------------|
+| **Protocol** | msgType **4** (`MSG_ZK_OMNI`) — nullifier anti-replay (not nonce scopes like msgType 3) |
+| **ZK** | Ed25519 PoK of secret; nullifier = `H(domain ‖ pk ‖ binding)`; secret never on-chain |
+| **Robinhood (EVM)** | `CheshireZkOmniMessenger.sol` — peer allowlist, nullifier consume, proof length + binding checks |
+| **Solana** | Anchor program `programs/zk_omni` id `Hfbc3tAGYE5nBUa5UncjSV6hoWd3JoVKdA49jPcreXFJ` — `receive_zk_omni` + nullifier PDA + **Ed25519Program** precompile check |
+| **Codec / SDK** | `src/zkOmni/` — plan, encode/decode, verify, Solana ix builders, viem/web3 deliver |
+| **Relayer** | JSONL journal, lifecycle `observed→verified→queued→relayed→delivered`, HTTP `/health` `/oneshot` |
+| **CLI** | `zk-omni-plan`, `zk-omni-oneshot`, `zk-omni-nullifier`, `zk-omni-status`, binary `zk-omni-relayer` |
+| **Zero Clawd** | `pkg/zkomni` + `clawdbot zero zkomni plan\|oneshot` + NL `zero ask "zk-omni…"` |
+| **Agent TUI** | `packages/clawd-agent-tui` tools `zk_omni_plan` / `zk_omni_oneshot` |
+
+```text
+┌────────────────────┐     LayerZero V2      ┌──────────────────────────┐
+│ Robinhood (30416)  │ ───────────────────► │ Solana (30168)           │
+│ ZkOmniMessenger    │                      │ programs/zk_omni         │
+│ sendZkOmni         │ ◄─────────────────── │ receive_zk_omni + NF PDA │
+└─────────┬──────────┘                      └────────────┬─────────────┘
+          │                                              │
+          └────────── zk-omni-relayer ───────────────────┘
+               observe → verifyZkProof → deliver (viem / web3.js)
+```
+
+### One-shot (no API key for plan)
 
 ```bash
-# Plan a cross-chain ZK message (no keys required)
+# Plan a cross-chain ZK message
 npx robinhood-agents zk-omni-plan --action attest --memo demo
 
-# One-shot local relayer deliver (journal + simulated chain delivery)
+# Plan + journaled relayer deliver (simulates when RPC/keys missing)
 npx robinhood-agents zk-omni-oneshot --action publish_attestation --memo oneshot
 
 # Long-running relayer HTTP service
 npm run zk-omni:relayer -- --port 8787
 curl -s http://127.0.0.1:8787/health
+
+# Zero Clawd (from ClawdBrowser/go-bot)
+clawdbot zero zkomni plan --action attest --memo demo
+clawdbot zero zkomni oneshot --action publish_attestation
+clawdbot zero ask "zk-omni message attest demo"
 ```
+
+### SDK
+
+```js
+import {
+  planZkOmniMessage,
+  createRelayer,
+  verifyZkProof,
+  planSolanaReceive,
+  buildRobinhoodSendCall,
+} from "cheshire-terminal-agents/zkOmni";
+
+const plan = planZkOmniMessage({
+  direction: "robinhood-to-solana",
+  action: "publish_attestation",
+  memo: "one-shot",
+});
+// plan.message has nullifier, proofPubkey, proof (64-byte Ed25519)
+
+const relayer = createRelayer({ allowSimulateFallback: true });
+await relayer.init();
+const job = await relayer.oneshot(plan);
+```
+
+### Source map
 
 | Piece | Location |
 |-------|----------|
-| Messenger contract | `contracts/zk-omni/CheshireZkOmniMessenger.sol` |
-| Codec + relayer | `src/zkOmni/` |
+| Messenger (RH) | `contracts/zk-omni/CheshireZkOmniMessenger.sol` |
+| Mock LZ endpoint | `contracts/zk-omni/MockLzEndpoint.sol` |
+| Solana receiver | `programs/zk_omni/` (+ `idl.json`) |
+| Codec / proof / deliver / relayer | `src/zkOmni/{codec,proof,solana,deliver,relayer}.js` |
 | Docs | [`docs/ZK_OMNI.md`](./docs/ZK_OMNI.md) |
-| Skill | `skills/zk-omni-messaging/SKILL.md` |
-| Foundry tests | `forge test --match-contract CheshireZkOmniMessengerTest` |
+| Skill (this package) | `skills/zk-omni-messaging/SKILL.md` |
+| Skill (Zero Clawd) | go-bot `skills/cheshire-zk-omni/SKILL.md` |
+| Zero Clawd Go | go-bot `pkg/zkomni` + `cmd/clawdbot/zero.go` |
+| Agent TUI | monorepo `packages/clawd-agent-tui` |
+| Env example | `.env.example` (`ZK_OMNI_*`) |
 
-See also `packages/clawd-agent-tui` for a terminal UI with `zk_omni_plan` / `zk_omni_oneshot` tools.
+### Tests
+
+```bash
+npm run test:zk-omni                          # Node codec/relayer/deliver (11+)
+forge test --match-contract CheshireZkOmniMessengerTest
+cd programs/zk_omni && cargo test             # layout + program id
+```
+
+Live deliver needs `RH_RPC_URL` + `ZK_OMNI_MESSENGER_ROBINHOOD` + key (or `ZK_OMNI_SIMULATE=1`). Solana receive needs `SOLANA_RPC_URL` + keypair + peer bytes32; tx includes **Ed25519 precompile ix then `receive_zk_omni`**.
 
 ## Agent catalog
 

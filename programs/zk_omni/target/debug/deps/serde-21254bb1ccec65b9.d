@@ -1,0 +1,14 @@
+/Users/8bit/cheshire-terminal/robinhood-agents/programs/zk_omni/target/debug/deps/serde-21254bb1ccec65b9.d: /Users/8bit/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs /Users/8bit/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs /Users/8bit/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs /Users/8bit/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs /Users/8bit/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs /Users/8bit/cheshire-terminal/robinhood-agents/programs/zk_omni/target/debug/build/serde-57f8091608013940/out/private.rs
+
+/Users/8bit/cheshire-terminal/robinhood-agents/programs/zk_omni/target/debug/deps/libserde-21254bb1ccec65b9.rlib: /Users/8bit/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs /Users/8bit/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs /Users/8bit/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs /Users/8bit/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs /Users/8bit/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs /Users/8bit/cheshire-terminal/robinhood-agents/programs/zk_omni/target/debug/build/serde-57f8091608013940/out/private.rs
+
+/Users/8bit/cheshire-terminal/robinhood-agents/programs/zk_omni/target/debug/deps/libserde-21254bb1ccec65b9.rmeta: /Users/8bit/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs /Users/8bit/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs /Users/8bit/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs /Users/8bit/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs /Users/8bit/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs /Users/8bit/cheshire-terminal/robinhood-agents/programs/zk_omni/target/debug/build/serde-57f8091608013940/out/private.rs
+
+/Users/8bit/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs:
+/Users/8bit/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs:
+/Users/8bit/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs:
+/Users/8bit/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs:
+/Users/8bit/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs:
+/Users/8bit/cheshire-terminal/robinhood-agents/programs/zk_omni/target/debug/build/serde-57f8091608013940/out/private.rs:
+
+# env-dep:OUT_DIR=/Users/8bit/cheshire-terminal/robinhood-agents/programs/zk_omni/target/debug/build/serde-57f8091608013940/out

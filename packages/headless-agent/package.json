@@ -12,6 +12,9 @@
     "test": "node --import tsx --test src/privacy.test.ts src/tools/chain-context.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
+  "dependencies": {
+    "tsx": "^4.21.0"
+  },
   "engines": {
     "node": ">=20"
   }

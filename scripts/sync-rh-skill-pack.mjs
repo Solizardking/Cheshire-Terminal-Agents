@@ -49,6 +49,14 @@ function main() {
   if (!Array.isArray(pack.skills) || pack.skills.length === 0) {
     throw new Error("pack-index.json has no skills[] array");
   }
+  const skillIds = pack.skills.map((entry) => {
+    if (typeof entry === "string") return entry;
+    if (entry && typeof entry === "object") {
+      const id = entry.path || entry.name || entry.id || entry.slug;
+      if (typeof id === "string" && id.trim()) return id.trim();
+    }
+    throw new Error(`invalid pack-index skill entry: ${JSON.stringify(entry)}`);
+  });
 
   mkdirSync(DEST, { recursive: true });
 
@@ -61,7 +69,7 @@ function main() {
     cpSync(from, join(DEST, name));
   }
 
-  for (const skillId of pack.skills) {
+  for (const skillId of skillIds) {
     const from = join(source, skillId);
     const to = join(DEST, skillId);
     if (!existsSync(join(from, "SKILL.md"))) {
@@ -74,6 +82,8 @@ function main() {
   // Stamp vendoring metadata (does not change skill ids).
   const stamped = {
     ...pack,
+    skills: skillIds,
+    skillCount: skillIds.length,
     source: {
       upstream: "go-bot/skills",
       upstreamPath: source,
@@ -92,8 +102,8 @@ function main() {
         ok: true,
         source,
         dest: DEST,
-        skillCount: pack.skills.length,
-        skills: pack.skills,
+        skillCount: skillIds.length,
+        skills: skillIds,
       },
       null,
       2,

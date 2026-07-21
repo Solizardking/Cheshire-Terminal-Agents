@@ -1,13 +1,10 @@
 /**
  * Cheshire ZK Omnichain relayer.
  *
- * Observes outbound ZkOmni plans / events, verifies codec + nullifier freshness
- * against a local journal, and records delivery lifecycle. Designed to run as a
- * long-lived process or be driven one-shot from tests/CLI.
- *
- * Lifecycle: observed → verified → queued → relayed → delivered | failed
+ * Observes ZkOmni jobs, verifies Ed25519 ZK proofs, then delivers via
+ * production paths (RH sendZkOmni / Solana receive_zk_omni) from deliver.js.
  */
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { createServer } from "node:http";
@@ -16,7 +13,9 @@ import {
   encodeZkOmniMessage,
   MSG_ZK_OMNI,
   planZkOmniMessage,
+  verifyZkProof,
 } from "./codec.js";
+import { createDeliverFn } from "./deliver.js";
 
 export const RELAY_STATUSES = Object.freeze([
   "observed",
@@ -31,19 +30,10 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-function sha256Hex(value) {
-  return createHash("sha256").update(value).digest("hex");
-}
-
 export class ZkOmniJournal {
-  /**
-   * @param {{ path?: string }} [opts]
-   */
   constructor(opts = {}) {
     this.path = opts.path || null;
-    /** @type {Map<string, object>} */
     this.byId = new Map();
-    /** @type {Set<string>} */
     this.consumedNullifiers = new Set();
   }
 
@@ -103,8 +93,9 @@ export class ZkOmniRelayer {
    * @param {{
    *   journal?: ZkOmniJournal,
    *   journalPath?: string,
-   *   deliver?: (job: object) => Promise<{ ok: boolean, txHash?: string, error?: string }>,
-   *   logger?: (msg: string, meta?: object) => void,
+   *   deliver?: (job: object) => Promise<object>,
+   *   allowSimulateFallback?: boolean,
+   *   logger?: Function,
    * }} [opts]
    */
   constructor(opts = {}) {
@@ -115,11 +106,10 @@ export class ZkOmniRelayer {
       });
     this.deliver =
       opts.deliver ??
-      (async (job) => ({
-        ok: true,
-        txHash: `sim-${sha256Hex(job.payloadHex).slice(0, 16)}`,
-        simulated: true,
-      }));
+      createDeliverFn({
+        allowSimulateFallback: opts.allowSimulateFallback !== false,
+        simulate: opts.simulate,
+      });
     this.logger = opts.logger ?? (() => {});
     this.running = false;
     this._timer = null;
@@ -137,10 +127,6 @@ export class ZkOmniRelayer {
     this.stats.startedAt = nowIso();
   }
 
-  /**
-   * Ingest a planned or observed ZkOmni message.
-   * @param {object} input plan fields or { payloadHex }
-   */
   async observe(input) {
     let plan;
     if (input.payloadHex && !input.message) {
@@ -154,12 +140,23 @@ export class ZkOmniRelayer {
         message: decoded,
         payloadHex: input.payloadHex,
       };
+    } else if (input.message && input.payloadHex) {
+      plan = input;
     } else {
-      plan = input.payloadHex ? input : planZkOmniMessage(input);
+      plan = planZkOmniMessage(input);
     }
 
-    const nullifier = plan.message?.nullifier ?? plan.nullifier;
+    const message = plan.message;
+    const nullifier = message?.nullifier;
     if (!nullifier) throw new Error("observe requires a nullifier");
+
+    // Mandatory ZK verification at observe time
+    const zk = verifyZkProof(message);
+    if (!zk.ok) {
+      const err = new Error(`ZK proof invalid: ${zk.reason}`);
+      err.code = "ZK_VERIFY_FAILED";
+      throw err;
+    }
 
     if (this.journal.hasNullifier(nullifier)) {
       const err = new Error(`Nullifier already observed/consumed: ${nullifier}`);
@@ -167,21 +164,20 @@ export class ZkOmniRelayer {
       throw err;
     }
 
-    // Round-trip codec verification
-    const reencoded = encodeZkOmniMessage(plan.message);
-    if (reencoded.toLowerCase() !== plan.payloadHex.toLowerCase()) {
-      // Allow if we built from fields via planZkOmniMessage (canonical)
-      const decoded = decodeZkOmniMessage(plan.payloadHex);
-      if (decoded.nullifier.toLowerCase() !== nullifier.toLowerCase()) {
-        throw new Error("payloadHex does not decode to the provided nullifier");
-      }
-    }
-
-    const expiresAt = Number(plan.message.expiresAt);
+    const expiresAt = Number(message.expiresAt);
     if (expiresAt && expiresAt <= Math.floor(Date.now() / 1000)) {
       const err = new Error("Message already expired");
       err.code = "EXPIRED";
       throw err;
+    }
+
+    // Round-trip codec
+    const reencoded = encodeZkOmniMessage(message);
+    if (reencoded.toLowerCase() !== plan.payloadHex.toLowerCase()) {
+      const decoded = decodeZkOmniMessage(plan.payloadHex);
+      if (decoded.nullifier.toLowerCase() !== nullifier.toLowerCase()) {
+        throw new Error("payloadHex does not decode to the provided nullifier");
+      }
     }
 
     const job = {
@@ -193,13 +189,16 @@ export class ZkOmniRelayer {
       srcEid: plan.srcEid,
       dstEid: plan.dstEid,
       nullifier,
-      agentId: plan.message.agentId,
-      action: plan.message.action,
+      agentId: message.agentId,
+      action: message.action,
       payloadHex: plan.payloadHex,
-      message: plan.message,
+      message,
+      zk: { publicInputsHash: zk.publicInputsHash, binding: zk.binding },
       attempts: 0,
       lastError: null,
       txHash: null,
+      deliverPath: null,
+      simulated: null,
     };
 
     await this.journal.append(job);
@@ -213,11 +212,11 @@ export class ZkOmniRelayer {
     if (!job) throw new Error(`Unknown job ${id}`);
     const decoded = decodeZkOmniMessage(job.payloadHex);
     if (decoded.msgType !== MSG_ZK_OMNI) throw new Error("bad msgType");
-    if (decoded.nullifier.toLowerCase() !== job.nullifier.toLowerCase()) {
-      throw new Error("nullifier mismatch");
-    }
+    const zk = verifyZkProof(decoded);
+    if (!zk.ok) throw new Error(`ZK proof invalid: ${zk.reason}`);
     job.status = "verified";
     job.updatedAt = nowIso();
+    job.zk = { publicInputsHash: zk.publicInputsHash, binding: zk.binding };
     await this.journal.rewrite();
     this.stats.verified += 1;
     this.logger("verified", { id });
@@ -227,50 +226,53 @@ export class ZkOmniRelayer {
   async queue(id) {
     const job = this.journal.get(id);
     if (!job) throw new Error(`Unknown job ${id}`);
-    if (job.status !== "verified" && job.status !== "observed") {
-      throw new Error(`Cannot queue from status ${job.status}`);
-    }
     if (job.status === "observed") await this.verify(id);
-    job.status = "queued";
-    job.updatedAt = nowIso();
+    const j = this.journal.get(id);
+    j.status = "queued";
+    j.updatedAt = nowIso();
     await this.journal.rewrite();
-    return job;
+    return j;
   }
 
   async processOne(id) {
     const job = this.journal.get(id);
     if (!job) throw new Error(`Unknown job ${id}`);
-    if (job.status !== "queued" && job.status !== "verified" && job.status !== "observed") {
-      return job;
-    }
     if (job.status === "observed") await this.verify(id);
     if (job.status === "verified") await this.queue(id);
 
-    job.attempts += 1;
-    job.status = "relayed";
-    job.updatedAt = nowIso();
+    const current = this.journal.get(id);
+    current.attempts += 1;
+    current.status = "relayed";
+    current.updatedAt = nowIso();
     await this.journal.rewrite();
-    this.logger("relayed", { id: job.id, attempt: job.attempts });
+    this.logger("relayed", { id: current.id, attempt: current.attempts });
 
     try {
-      const result = await this.deliver(job);
+      const result = await this.deliver(current);
       if (!result?.ok) throw new Error(result?.error || "deliver failed");
-      job.status = "delivered";
-      job.txHash = result.txHash ?? null;
-      job.updatedAt = nowIso();
-      job.lastError = null;
+      current.status = "delivered";
+      current.txHash = result.txHash ?? null;
+      current.deliverPath = result.path ?? result.plan?.path ?? null;
+      current.simulated = result.simulated === true;
+      current.updatedAt = nowIso();
+      current.lastError = null;
       await this.journal.rewrite();
       this.stats.delivered += 1;
-      this.logger("delivered", { id: job.id, txHash: job.txHash });
-      return job;
+      this.logger("delivered", {
+        id: current.id,
+        txHash: current.txHash,
+        simulated: current.simulated,
+        path: current.deliverPath,
+      });
+      return current;
     } catch (err) {
-      job.status = "failed";
-      job.lastError = err instanceof Error ? err.message : String(err);
-      job.updatedAt = nowIso();
+      current.status = "failed";
+      current.lastError = err instanceof Error ? err.message : String(err);
+      current.updatedAt = nowIso();
       await this.journal.rewrite();
       this.stats.failed += 1;
-      this.logger("failed", { id: job.id, error: job.lastError });
-      return job;
+      this.logger("failed", { id: current.id, error: current.lastError });
+      return current;
     }
   }
 
@@ -286,9 +288,6 @@ export class ZkOmniRelayer {
     return results;
   }
 
-  /**
-   * One-shot: plan → observe → verify → deliver.
-   */
   async oneshot(input) {
     const job = await this.observe(input);
     return this.processOne(job.id);
@@ -325,9 +324,6 @@ export class ZkOmniRelayer {
     this._timer = null;
   }
 
-  /**
-   * Tiny health HTTP server for deploy checks.
-   */
   listen(port = 8787, host = "127.0.0.1") {
     const server = createServer(async (req, res) => {
       const url = new URL(req.url || "/", `http://${host}:${port}`);

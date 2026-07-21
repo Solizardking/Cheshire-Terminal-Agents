@@ -38,8 +38,6 @@ contract CheshireZkOmniMessenger is ILayerZeroReceiver {
     uint256 public constant MAX_MEMO_LENGTH = 200;
     uint256 public constant PROOF_LENGTH = 64;
 
-    bytes32 public constant NF_DOMAIN = keccak256("clawd-zk-omni-nullifier:v1");
-
     ILayerZeroEndpointV2 public immutable endpoint;
     address public owner;
     address public identityRegistry;
@@ -134,14 +132,37 @@ contract CheshireZkOmniMessenger is ILayerZeroReceiver {
         owner = newOwner;
     }
 
-    /// @notice ZK binding: nullifier must equal domain-separated hash of (proofPubkey, binding).
+    /// @notice ZK binding: nullifier = SHA-256("clawd-zk-omni-nullifier:v1" || 0x00 || pk || 0x00 || binding)
+    /// @dev binding = SHA-256(agentId || payloadCommitment || modelHash). Matches src/zkOmni/proof.js.
     function expectedNullifier(bytes32 proofPubkey, bytes32 agentId, bytes32 payloadCommitment, bytes32 modelHash)
         public
         pure
         returns (bytes32)
     {
-        bytes32 binding = keccak256(abi.encodePacked(agentId, payloadCommitment, modelHash));
-        return keccak256(abi.encodePacked(NF_DOMAIN, proofPubkey, binding));
+        bytes32 binding = sha256(abi.encodePacked(agentId, payloadCommitment, modelHash));
+        return sha256(
+            abi.encodePacked(
+                "clawd-zk-omni-nullifier:v1",
+                bytes1(0),
+                proofPubkey,
+                bytes1(0),
+                binding
+            )
+        );
+    }
+
+    struct SendParams {
+        uint32 dstEid;
+        bytes32 agentId;
+        bytes32 nullifier;
+        bytes32 payloadCommitment;
+        bytes32 modelHash;
+        bytes32 proofPubkey;
+        uint64 expiresAt;
+        string action;
+        string memo;
+        bytes proof;
+        bytes options;
     }
 
     function encodeZkOmni(
@@ -170,94 +191,83 @@ contract CheshireZkOmniMessenger is ILayerZeroReceiver {
         );
     }
 
-    function quoteSend(
-        uint32 dstEid,
-        bytes32 agentId,
-        bytes32 nullifier,
-        bytes32 payloadCommitment,
-        bytes32 modelHash,
-        bytes32 proofPubkey,
-        uint64 expiresAt,
-        string calldata action,
-        string calldata memo,
-        bytes calldata proof,
-        bytes calldata options,
-        bool payInLzToken
-    ) external view returns (MessagingFee memory) {
-        _assertSendable(agentId, nullifier, proofPubkey, expiresAt, action, memo, proof, payloadCommitment, modelHash);
-        bytes32 peer = peers[dstEid];
+    function quoteSend(SendParams calldata p, bool payInLzToken)
+        external
+        view
+        returns (MessagingFee memory)
+    {
+        _assertSendable(p);
+        bytes32 peer = peers[p.dstEid];
         if (peer == bytes32(0)) revert InvalidPeer();
         bytes memory message = _encode(
-            agentId,
+            p.agentId,
             bytes32(uint256(uint160(msg.sender))),
-            nullifier,
-            payloadCommitment,
-            modelHash,
-            proofPubkey,
-            expiresAt,
-            action,
-            memo,
-            proof
+            p.nullifier,
+            p.payloadCommitment,
+            p.modelHash,
+            p.proofPubkey,
+            p.expiresAt,
+            p.action,
+            p.memo,
+            p.proof
         );
         return endpoint.quote(
             MessagingParams({
-                dstEid: dstEid,
+                dstEid: p.dstEid,
                 receiver: peer,
                 message: message,
-                options: options,
+                options: p.options,
                 payInLzToken: payInLzToken
             }),
             address(this)
         );
     }
 
-    function sendZkOmni(
-        uint32 dstEid,
-        bytes32 agentId,
-        bytes32 nullifier,
-        bytes32 payloadCommitment,
-        bytes32 modelHash,
-        bytes32 proofPubkey,
-        uint64 expiresAt,
-        string calldata action,
-        string calldata memo,
-        bytes calldata proof,
-        bytes calldata options,
-        MessagingFee calldata /* fee */
-    ) external payable returns (MessagingReceipt memory receipt) {
-        _assertSendable(agentId, nullifier, proofPubkey, expiresAt, action, memo, proof, payloadCommitment, modelHash);
-        bytes32 peer = peers[dstEid];
+    function sendZkOmni(SendParams calldata p, MessagingFee calldata /* fee */)
+        external
+        payable
+        returns (MessagingReceipt memory receipt)
+    {
+        _assertSendable(p);
+        bytes32 peer = peers[p.dstEid];
         if (peer == bytes32(0)) revert InvalidPeer();
 
-        if (consumedNullifier[nullifier]) revert NullifierReplay();
-        consumedNullifier[nullifier] = true;
+        if (consumedNullifier[p.nullifier]) revert NullifierReplay();
+        consumedNullifier[p.nullifier] = true;
 
         bytes memory message = _encode(
-            agentId,
+            p.agentId,
             bytes32(uint256(uint160(msg.sender))),
-            nullifier,
-            payloadCommitment,
-            modelHash,
-            proofPubkey,
-            expiresAt,
-            action,
-            memo,
-            proof
+            p.nullifier,
+            p.payloadCommitment,
+            p.modelHash,
+            p.proofPubkey,
+            p.expiresAt,
+            p.action,
+            p.memo,
+            p.proof
         );
 
         receipt = endpoint.send{value: msg.value}(
             MessagingParams({
-                dstEid: dstEid,
+                dstEid: p.dstEid,
                 receiver: peer,
                 message: message,
-                options: options,
+                options: p.options,
                 payInLzToken: false
             }),
             msg.sender
         );
 
         emit ZkOmniSent(
-            dstEid, receipt.guid, nullifier, agentId, msg.sender, payloadCommitment, proofPubkey, action
+            p.dstEid,
+            receipt.guid,
+            p.nullifier,
+            p.agentId,
+            msg.sender,
+            p.payloadCommitment,
+            p.proofPubkey,
+            p.action
         );
     }
 
@@ -349,31 +359,24 @@ contract CheshireZkOmniMessenger is ILayerZeroReceiver {
         return consumedNullifier[nullifier];
     }
 
-    function _assertSendable(
-        bytes32 agentId,
-        bytes32 nullifier,
-        bytes32 proofPubkey,
-        uint64 expiresAt,
-        string calldata action,
-        string calldata memo,
-        bytes calldata proof,
-        bytes32 payloadCommitment,
-        bytes32 modelHash
-    ) internal view {
-        if (agentId == bytes32(0)) revert InvalidAgentId();
-        if (nullifier == bytes32(0)) revert InvalidNullifier();
-        if (proofPubkey == bytes32(0)) revert InvalidProof();
-        if (proof.length != PROOF_LENGTH) revert InvalidProof();
-        if (expiresAt <= block.timestamp) revert IntentExpired();
-        if (bytes(action).length > MAX_ACTION_LENGTH || bytes(memo).length > MAX_MEMO_LENGTH) {
+    function _assertSendable(SendParams calldata p) internal view {
+        if (p.agentId == bytes32(0)) revert InvalidAgentId();
+        if (p.nullifier == bytes32(0)) revert InvalidNullifier();
+        if (p.proofPubkey == bytes32(0)) revert InvalidProof();
+        if (p.proof.length != PROOF_LENGTH) revert InvalidProof();
+        if (p.expiresAt <= block.timestamp) revert IntentExpired();
+        if (bytes(p.action).length > MAX_ACTION_LENGTH || bytes(p.memo).length > MAX_MEMO_LENGTH) {
             revert IntentTextTooLong();
         }
-        if (expectedNullifier(proofPubkey, agentId, payloadCommitment, modelHash) != nullifier) {
+        if (
+            expectedNullifier(p.proofPubkey, p.agentId, p.payloadCommitment, p.modelHash)
+                != p.nullifier
+        ) {
             revert InvalidProofRelation();
         }
         if (identityRegistry != address(0)) {
             (bool ok, bytes memory ret) = identityRegistry.staticcall(
-                abi.encodeWithSignature("isAuthorized(address,uint256)", msg.sender, uint256(agentId))
+                abi.encodeWithSignature("isAuthorized(address,uint256)", msg.sender, uint256(p.agentId))
             );
             if (!ok || ret.length < 32 || !abi.decode(ret, (bool))) revert UnauthorizedAgent();
         }

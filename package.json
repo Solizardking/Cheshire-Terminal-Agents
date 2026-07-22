@@ -1,6 +1,6 @@
 {
   "name": "cheshire-terminal-agents",
-  "version": "1.48.0",
+  "version": "1.48.1",
   "description": "Cheshire Terminal Agents — dual-chain identity forge (Robinhood Chain EVM + Solana SVM), dual-rail omni mint with LayerZero zk-omni, production agent catalog, plus optional clawdbot-go (Zero Clawd) install bridge for cheshireterminal.ai/agents and /zeroclawd",
   "type": "module",
   "sideEffects": false,

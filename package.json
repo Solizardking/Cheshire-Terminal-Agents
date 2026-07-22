@@ -96,6 +96,7 @@
   },
   "dependencies": {
     "@solana/web3.js": "^1.98.4",
+    "cheshire-terminal-agents": "^1.48.0",
     "viem": "^2.38.0"
   },
   "files": [
